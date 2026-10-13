@@ -670,21 +670,27 @@ export default function App() {
             style={styles.inputUrl}
             value={apiUrl}
             onChangeText={setApiUrl}
-            placeholder="http://10.0.2.2:3000 o http://localhost:3000"
+            placeholder="http://192.168.1.50:3001 o http://localhost:3001"
             placeholderTextColor="#94a3b8"
           />
           <View style={styles.quickUrlRow}>
             <TouchableOpacity
               style={styles.btnSmall}
-              onPress={() => setApiUrl('http://10.0.2.2:3000')}
+              onPress={() => setApiUrl('http://192.168.1.50:3001')}
             >
-              <Text style={styles.btnSmallText}>Android Emulator (10.0.2.2)</Text>
+              <Text style={styles.btnSmallText}>Wi-Fi LAN (192.168.1.50)</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.btnSmall}
-              onPress={() => setApiUrl('http://localhost:3000')}
+              onPress={() => setApiUrl('http://localhost:3001')}
             >
-              <Text style={styles.btnSmallText}>Localhost:3000</Text>
+              <Text style={styles.btnSmallText}>USB / ADB (localhost:3001)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.btnSmall}
+              onPress={() => setApiUrl('http://10.0.2.2:3001')}
+            >
+              <Text style={styles.btnSmallText}>Emulator (10.0.2.2:3001)</Text>
             </TouchableOpacity>
           </View>
 

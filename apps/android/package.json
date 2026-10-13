@@ -4,8 +4,9 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "build:android": "eas build -p android"
+    "android": "expo run:android",
+    "build:android": "eas build -p android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "expo": "~51.0.0",
@@ -23,7 +24,9 @@
   },
   "expo": {
     "install": {
-      "exclude": ["typescript"]
+      "exclude": [
+        "typescript"
+      ]
     }
   },
   "private": true
