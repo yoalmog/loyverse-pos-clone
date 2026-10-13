@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db.ts';
 import { posService } from '@/lib/pos-service.ts';
+import { authService } from '@/lib/auth-service.ts';
 
 export async function GET() {
   try {
@@ -30,10 +31,28 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const authHeader = request.headers.get('authorization') || request.headers.get('x-pos-session');
+    if (authHeader) {
+      const auth = authService.verifyRequest(request, ['ADMIN', 'MANAGER']);
+      if (!auth.authorized) {
+        return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+      }
+    }
+
     const body = await request.json();
     const { productId, variationId, changeAmount, reason, userId } = body;
+    const operatorId = userId || 'usr_admin';
 
-    posService.adjustStock(productId, variationId || null, Number(changeAmount), reason || 'Ajuste manual', userId || 'usr_admin');
+    const db = getDb();
+    const user = db.prepare('SELECT id, role, active FROM users WHERE id = ?').get(operatorId) as any;
+    if (!user || user.active !== 1 || (user.role !== 'ADMIN' && user.role !== 'MANAGER')) {
+      return NextResponse.json(
+        { success: false, error: 'Usuario no autorizado para modificar inventario. Se requiere rol ADMIN o MANAGER.' },
+        { status: 403 }
+      );
+    }
+
+    posService.adjustStock(productId, variationId || null, Number(changeAmount), reason || 'Ajuste manual', operatorId);
     return NextResponse.json({ success: true });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 400 });

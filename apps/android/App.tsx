@@ -133,21 +133,27 @@ export default function App() {
     loadInitialData();
   }, [loadInitialData]);
 
-  // 2. PIN Pad Logic
-  const handlePinPress = (num: string) => {
+  // 2. PIN Pad Logic with Server Authentication
+  const handlePinPress = async (num: string) => {
     if (enteredPin.length < 4) {
       const next = enteredPin + num;
       setEnteredPin(next);
 
       if (next.length === 4) {
-        // Match against real cashiers from server/cache or fallback pins
-        const matched = cashiers.find((c: any) => c.pin === next || (next === '1234' && c.role === 'CASHIER') || (next === '9999' && c.role === 'ADMIN'));
+        try {
+          const authRes = await posApi.authenticatePin(next);
+          if (authRes.success && authRes.user) {
+            setCurrentEmployee(authRes.user);
+            setEnteredPin('');
+            setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');
+            return;
+          }
+        } catch {
+          // Fall through to local fallback
+        }
 
-        if (matched) {
-          setCurrentEmployee({ id: matched.id, name: matched.name, role: matched.role });
-          setEnteredPin('');
-          setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');
-        } else if (next === '1234') {
+        // Local offline fallback for demo PINs
+        if (next === '1234') {
           setCurrentEmployee({ id: 'usr_cashier', name: 'Carlos Mendoza', role: 'CASHIER' });
           setEnteredPin('');
           setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');

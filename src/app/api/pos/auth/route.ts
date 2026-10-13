@@ -1,8 +1,24 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db.ts';
+import { authService } from '@/lib/auth-service.ts';
 
 export async function POST(request: Request) {
   try {
+    const clientIp = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'default_client';
+    const rateLimitKey = `auth_ip_${clientIp.split(',')[0].trim()}`;
+
+    // 1. Check rate limit
+    const rateLimit = authService.checkRateLimit(rateLimitKey, 5, 60000, 60000);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Demasiados intentos fallidos. Reintente en ${rateLimit.retryAfterSeconds || 60} segundos.`,
+        },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { pin } = body;
 
@@ -19,14 +35,23 @@ export async function POST(request: Request) {
       .get(pin) as { id: string; name: string; email: string; role: string } | undefined;
 
     if (!user) {
+      authService.recordFailedAttempt(rateLimitKey, 5, 60000);
       return NextResponse.json(
         { success: false, error: 'PIN incorrecto. Acceso denegado.' },
         { status: 401 }
       );
     }
 
+    // Reset rate limit on success
+    authService.resetRateLimit(rateLimitKey);
+
+    // Issue session token
+    const session = authService.createSession(user.id, user.role, 24);
+
     return NextResponse.json({
       success: true,
+      token: session.token,
+      expiresAt: session.expiresAt,
       user: {
         id: user.id,
         name: user.name,

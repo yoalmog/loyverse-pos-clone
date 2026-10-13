@@ -55,10 +55,10 @@ export const CheckoutSchema = z.object({
   items: z.array(z.object({
     productId: z.string(),
     variationId: z.string().nullable().optional(),
-    productName: z.string(),
+    productName: z.string().optional(),
     variationName: z.string().nullable().optional(),
     quantity: z.number().positive(),
-    unitPrice: z.number().nonnegative(),
+    unitPrice: z.number().nonnegative().optional(),
     discountAmount: z.number().nonnegative().optional(),
     selectedModifiers: z.array(z.object({
       modifierId: z.string(),
@@ -335,13 +335,18 @@ export const posService = {
     const processedItems: any[] = [];
 
     for (const item of input.items) {
+      const p = db.prepare('SELECT id, name, price, stock_quantity, track_stock FROM products WHERE id = ?').get(item.productId) as any;
+      if (!p) throw new Error(`Producto no encontrado: ${item.productId}`);
+
       // Calculate modifier additions
       let modifiersExtra = 0;
-      for (const mod of item.selectedModifiers) {
+      const mods = item.selectedModifiers || [];
+      for (const mod of mods) {
         modifiersExtra += mod.price;
       }
 
-      const itemBasePrice = item.unitPrice + modifiersExtra;
+      const basePrice = item.unitPrice !== undefined ? item.unitPrice : p.price;
+      const itemBasePrice = basePrice + modifiersExtra;
       const itemSubtotal = Math.round(itemBasePrice * item.quantity);
       const itemDiscount = item.discountAmount || 0;
       const itemTotal = Math.max(0, itemSubtotal - itemDiscount);
@@ -353,14 +358,14 @@ export const posService = {
         orderId,
         productId: item.productId,
         variationId: item.variationId || null,
-        productName: item.productName,
+        productName: item.productName || p.name,
         variationName: item.variationName || null,
         quantity: item.quantity,
         unitPrice: itemBasePrice,
         subtotal: itemSubtotal,
         discountAmount: itemDiscount,
         total: itemTotal,
-        selectedModifiersJson: JSON.stringify(item.selectedModifiers),
+        selectedModifiersJson: JSON.stringify(mods),
       });
     }
 
@@ -468,11 +473,17 @@ export const posService = {
           if (item.variationId) {
             const vari = getVariationStmt.get(item.variationId) as { stock_quantity: number } | undefined;
             const prev = vari?.stock_quantity ?? 0;
+            if (prev < item.quantity) {
+              throw new Error(`Stock insuficiente para la variante: disponible ${prev}, solicitado ${item.quantity}`);
+            }
             const next = prev - item.quantity;
             updateVariationStockStmt.run(item.quantity, item.variationId);
             insertInventoryLog.run(`inv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, item.productId, item.variationId, -item.quantity, prev, next, orderId, input.userId);
           } else {
             const prev = prod.stock_quantity;
+            if (prev < item.quantity) {
+              throw new Error(`Stock insuficiente para el producto "${item.productName || item.productId}": disponible ${prev}, solicitado ${item.quantity}`);
+            }
             const next = prev - item.quantity;
             updateProductStockStmt.run(item.quantity, now, item.productId);
             insertInventoryLog.run(`inv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, item.productId, null, -item.quantity, prev, next, orderId, input.userId);

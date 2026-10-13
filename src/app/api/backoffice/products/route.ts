@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db.ts';
+import { authService } from '@/lib/auth-service.ts';
 
 export async function GET() {
   try {
@@ -20,8 +21,27 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const authHeader = request.headers.get('authorization') || request.headers.get('x-pos-session');
+    if (authHeader) {
+      const auth = authService.verifyRequest(request, ['ADMIN', 'MANAGER']);
+      if (!auth.authorized) {
+        return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+      }
+    }
+
     const body = await request.json();
     const db = getDb();
+
+    // Verify operator role if userId provided
+    if (body.userId) {
+      const user = db.prepare('SELECT id, role, active FROM users WHERE id = ?').get(body.userId) as any;
+      if (!user || user.active !== 1 || (user.role !== 'ADMIN' && user.role !== 'MANAGER')) {
+        return NextResponse.json(
+          { success: false, error: 'Usuario no autorizado para crear productos. Rol ADMIN o MANAGER requerido.' },
+          { status: 403 }
+        );
+      }
+    }
 
     const id = body.id || `prod_${Date.now()}`;
     const now = new Date().toISOString();
@@ -56,8 +76,27 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const authHeader = request.headers.get('authorization') || request.headers.get('x-pos-session');
+    if (authHeader) {
+      const auth = authService.verifyRequest(request, ['ADMIN', 'MANAGER']);
+      if (!auth.authorized) {
+        return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+      }
+    }
+
     const body = await request.json();
     const db = getDb();
+
+    if (body.userId) {
+      const user = db.prepare('SELECT id, role, active FROM users WHERE id = ?').get(body.userId) as any;
+      if (!user || user.active !== 1 || (user.role !== 'ADMIN' && user.role !== 'MANAGER')) {
+        return NextResponse.json(
+          { success: false, error: 'Usuario no autorizado para editar productos.' },
+          { status: 403 }
+        );
+      }
+    }
+
     const now = new Date().toISOString();
 
     db.prepare(`
@@ -101,6 +140,14 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const authHeader = request.headers.get('authorization') || request.headers.get('x-pos-session');
+    if (authHeader) {
+      const auth = authService.verifyRequest(request, ['ADMIN', 'MANAGER']);
+      if (!auth.authorized) {
+        return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+      }
+    }
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     if (!id) return NextResponse.json({ success: false, error: 'Product ID required' }, { status: 400 });

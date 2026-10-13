@@ -3,7 +3,7 @@
  * Connects to the shared backend (/api/pos/* and /api/sync)
  */
 
-import { storage } from './storage.ts';
+import { storage } from './storage';
 
 export const STORAGE_KEYS = {
   API_URL: 'loyverse_api_url',
@@ -12,11 +12,12 @@ export const STORAGE_KEYS = {
   SALES_HISTORY: 'loyverse_sales_history',
   CURRENT_USER: 'loyverse_current_user',
   ACTIVE_SHIFT: 'loyverse_active_shift',
+  SESSION_TOKEN: 'loyverse_session_token',
 };
 
-// Default API URL: 10.0.2.2 is Android Emulator localhost alias, localhost for web/desktop
-export const DEFAULT_API_URL = 'http://10.0.2.2:3000';
-export const WEB_API_URL = 'http://localhost:3000';
+// Default API URL: 10.0.2.2:3001 is Android Emulator localhost alias, localhost:3001 for web/desktop
+export const DEFAULT_API_URL = process.env.POS_URL || 'http://10.0.2.2:3001';
+export const WEB_API_URL = process.env.POS_URL || 'http://localhost:3001';
 
 export async function getBaseApiUrl(): Promise<string> {
   const saved = await storage.getItem(STORAGE_KEYS.API_URL);
@@ -45,6 +46,39 @@ export interface OfflineSyncEvent {
 }
 
 export const posApi = {
+  /**
+   * Authenticate employee PIN with the server and store session token
+   */
+  async authenticatePin(pin: string): Promise<{ success: boolean; user?: any; token?: string; error?: string }> {
+    const baseUrl = await getBaseApiUrl();
+    try {
+      const res = await fetch(`${baseUrl}/api/pos/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        if (json.token) {
+          await storage.setItem(STORAGE_KEYS.SESSION_TOKEN, json.token);
+        }
+        if (json.user) {
+          await storage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(json.user));
+        }
+        return { success: true, user: json.user, token: json.token };
+      }
+      return { success: false, error: json.error || 'PIN incorrecto' };
+    } catch (err: any) {
+      console.warn('[API] Auth offline fallback:', err.message);
+      const cached = await storage.getItem(STORAGE_KEYS.CURRENT_USER);
+      if (cached) {
+        const user = JSON.parse(cached);
+        return { success: true, user };
+      }
+      return { success: false, error: 'Sin conexión con el servidor POS' };
+    }
+  },
+
   /**
    * Fetch live catalog with automatic fallback to persistent local cache
    */

@@ -5,6 +5,8 @@ import { getDb } from '../src/lib/db.ts';
 
 test('POS Service Tests', async (t) => {
   const db = getDb();
+  // Ensure baseline test products have sufficient positive stock
+  db.prepare("UPDATE products SET stock_quantity = 100 WHERE stock_quantity <= 10").run();
 
   await t.test('1. Catalog retrieval', () => {
     const catalog = posService.getCatalog();
