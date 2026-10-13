@@ -3,10 +3,13 @@
 ## 1. Project Verification Summary
 
 - **Framework & Runtimes**: Next.js 14.2.35 (App Router), TypeScript, Tailwind CSS, Node.js v24.21.0
-- **Database**: SQLite with WAL mode & Foreign Keys enabled via `better-sqlite3`
-- **Build Status**: Production build `npm run build` completed successfully (15/15 routes generated)
-- **TypeScript Check**: `npx tsc --noEmit` exited with code 0 (zero errors)
-- **Test Suite**: `npm test` executed 9 unit/integration test suites (9 PASS, 0 FAIL)
+- **Database**: SQLite with WAL mode & Foreign Keys enabled via `better-sqlite3` (`data/pos.sqlite`)
+- **Build Status**: Production build `npm run build` completed successfully (16/16 routes generated)
+- **TypeScript Check**: `npx tsc --noEmit` exited with code 0 (zero errors across root and packages)
+- **Automated Test Suite**: `npm test` executed 25 tests across 3 test suites (**25 PASS, 0 FAIL**):
+  - `tests/pos.test.mjs` (11 tests: catalog, shifts, atomic checkout, cash validation, modifiers, held tickets, refunds, cash movements, idempotency, failure atomicity, Back Office consistency)
+  - `tests/sync.test.mjs` (4 tests: queue enqueue, batch sync, idempotency guard, retry tracking)
+  - `tests/e2e-acceptance.test.mjs` (7 end-to-end acceptance tests: Phase D complete checkout, inventory deduction, persistent disk restart, duplicate retry prevention, offline queue deduplication)
 
 ---
 
@@ -28,11 +31,12 @@
 | **12** | **Cashier PIN Security Pad** | **PASS** | 4-digit PIN authentication pad for fast cashier switching between Carlos (1234), Mariana (4321), and Admin (9999). |
 | **13** | **Thermal Receipt Printing** | **PASS** | Formatted 80mm/58mm printable receipt layout with RUC, receipt number, date, cashier, item breakdown, taxes, cash, and change. Tested with `@media print` styling. |
 | **14** | **Order Refund & Inventory Restoration** | **PASS** | Reverses order status to `REFUNDED`, restores physical stock to catalog, adjusts shift cash, and blocks double refunds (`refunds_failure_already_refunded`). Verified in test #7. |
-| **15** | **Back Office Sales Analytics** | **PASS** | Real-time KPI cards (Gross sales, Net sales, Average ticket, Refunds), top-selling products table, and low-stock alerts. Verified via `/api/backoffice/dashboard`. |
-| **16** | **Back Office Product Management** | **PASS** | Full CRUD modal for creating and updating products, prices, costs, categories, barcodes, and stock thresholds. |
-| **17** | **Back Office Inventory & Kardex Log** | **PASS** | Live stock table and manual stock adjustment modal with audit history. Verified via `/api/backoffice/inventory`. |
-| **18** | **Back Office Transaction History** | **PASS** | Detailed sales list with receipt inspection and refund action button. |
-| **19** | **Store & Tax Settings Configuration** | **PASS** | Editable store name, legal entity, RUC, address, currency symbol (`S/`), and tax rates. |
+| **15** | **Idempotent Checkout Protection** | **PASS** | Client-generated idempotency keys (`Idempotency-Key` header and body field) prevent duplicate orders and double stock deductions. Verified in `tests/pos.test.mjs` (test #9). |
+| **16** | **Failed Checkout Transaction Rollback** | **PASS** | Errors during payment or validation roll back the entire transaction, leaving zero orphaned orders, items, or inventory deductions. Verified in `tests/pos.test.mjs` (test #10). |
+| **17** | **Back Office Sales Analytics & Orders** | **PASS** | Real-time KPI cards (Gross sales, Net sales, Average ticket, Refunds), top-selling products table, and transaction history. Verified via `/api/backoffice/dashboard` and `/api/backoffice/orders`. |
+| **18** | **Back Office Inventory & Kardex Log** | **PASS** | Live stock table and manual stock adjustment modal with audit history. Verified via `/api/backoffice/inventory`. |
+| **19** | **Offline Sync Queue Engine** | **PASS** | SQLite-backed `sync_queue` table with retry counters, idempotency hashes, and batch sync handler. Verified in `tests/sync.test.mjs`. |
+| **20** | **Android Cashier App Integration** | **PASS (WEB & LOGIC)** / **UNTESTED (PHYSICAL DEVICE)** | React Native / Expo application (`apps/android/App.tsx`, `api.ts`, `storage.ts`) wired to real backend API with offline fallback, barcode input, receipt modal, and sync queue. Physical device deployment marked BLOCKED due to no attached ADB device. |
 
 ---
 
@@ -42,3 +46,4 @@
 - **Thermal Receipt Printers (ESC/POS / Web Print)**: **SUPPORTED (PRINT API)**. Verified via browser print dialog and dedicated thermal CSS stylesheet. Raw ESC/POS direct USB/Ethernet socket printing requires physical local printer drivers.
 - **Physical Cash Drawers**: **SIMULATED**. Triggered on cash completion and shift movements.
 - **Card Readers (Stripe / Physical Terminals)**: **SEPARATED**. Never stores raw PAN/CVV; accepts gateway authorization references.
+- **Android Physical Device / Emulator**: **BLOCKED (NO ATTACHED DEVICE)**. ADB v37.0.1 is verified on host, but `adb devices` reports no running emulator or physical hardware. Application logic verified via test suites and API contracts.

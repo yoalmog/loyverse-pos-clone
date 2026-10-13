@@ -4,6 +4,10 @@ import { posService } from '@/lib/pos-service.ts';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    const idempotencyHeader = request.headers.get('idempotency-key') || request.headers.get('x-idempotency-key');
+    if (idempotencyHeader && !body.idempotencyKey) {
+      body.idempotencyKey = idempotencyHeader;
+    }
     const order = posService.processCheckout(body);
     return NextResponse.json({ success: true, data: order });
   } catch (error: any) {

@@ -22,6 +22,7 @@ export interface CartItemInput {
 }
 
 export interface CheckoutInput {
+  idempotencyKey?: string | null;
   shiftId?: string | null;
   userId: string;
   customerId?: string | null;
@@ -46,6 +47,7 @@ export interface CashMovementInput {
 }
 
 export const CheckoutSchema = z.object({
+  idempotencyKey: z.string().nullable().optional(),
   shiftId: z.string().nullable().optional(),
   userId: z.string(),
   customerId: z.string().nullable().optional(),
@@ -303,6 +305,14 @@ export const posService = {
     const input = CheckoutSchema.parse(rawInput);
     const db = getDb();
 
+    // Idempotency check: Return existing order if key was already processed
+    if (input.idempotencyKey) {
+      const existing = db.prepare('SELECT id FROM orders WHERE idempotency_key = ?').get(input.idempotencyKey) as { id: string } | undefined;
+      if (existing) {
+        return this.getOrderById(existing.id)!;
+      }
+    }
+
     const orderId = input.savedOrderId || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     let receiptNumber = '';
     const now = new Date().toISOString();
@@ -385,11 +395,12 @@ export const posService = {
       // B. Insert Order
       db.prepare(`
         INSERT INTO orders (
-          id, receipt_number, shift_id, user_id, customer_id, dining_option_id,
+          id, idempotency_key, receipt_number, shift_id, user_id, customer_id, dining_option_id,
           subtotal, discount_total, tax_total, total, status, note, ticket_name, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?)
       `).run(
         orderId,
+        input.idempotencyKey || null,
         receiptNumber,
         input.shiftId || null,
         input.userId,

@@ -178,6 +178,7 @@ function initSchema(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY,
+      idempotency_key TEXT UNIQUE,
       receipt_number TEXT UNIQUE NOT NULL,
       shift_id TEXT,
       user_id TEXT NOT NULL,
@@ -294,6 +295,12 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
     CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
   `);
+
+  // Migration: ensure idempotency_key exists on existing databases
+  try {
+    db.exec('ALTER TABLE orders ADD COLUMN idempotency_key TEXT');
+  } catch {}
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders(idempotency_key);');
 }
 
 function seedInitialData(db: Database.Database) {

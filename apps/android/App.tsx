@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,124 +10,196 @@ import {
   Modal,
   Alert,
   FlatList,
-  StatusBar
+  StatusBar,
+  ActivityIndicator
 } from 'react-native';
+import { posApi, getBaseApiUrl, setBaseApiUrl, DEFAULT_API_URL } from './api';
+import { storage } from './storage';
 
-// Product and Cart Interfaces
+// Product, Category, and Cart Types
 interface Product {
   id: string;
   name: string;
-  price: number;
-  category_id: string;
-  color: string;
+  price: number; // cents
+  category_id?: string | null;
+  color?: string;
   stock_quantity: number;
   barcode?: string;
   sku?: string;
+  variations?: any[];
+  modifiers?: any[];
+}
+
+interface Category {
+  id: string;
+  name: string;
+  color?: string;
 }
 
 interface CartItem {
   id: string;
   productId: string;
+  variationId?: string | null;
   name: string;
   price: number;
   quantity: number;
+  selectedModifiers: any[];
 }
 
 export default function App() {
-  // Navigation Screens: 'PIN' | 'REGISTER' | 'SALES' | 'HISTORY' | 'SHIFT' | 'SETTINGS'
-  const [currentScreen, setCurrentScreen] = useState<'PIN' | 'REGISTER' | 'SALES' | 'HISTORY' | 'SHIFT' | 'SETTINGS'>('PIN');
+  // Screens: 'PIN' | 'REGISTER' | 'SALES' | 'HISTORY' | 'SETTINGS'
+  const [currentScreen, setCurrentScreen] = useState<'PIN' | 'REGISTER' | 'SALES' | 'HISTORY' | 'SETTINGS'>('PIN');
   const [currentEmployee, setCurrentEmployee] = useState<{ id: string; name: string; role: string } | null>(null);
   const [enteredPin, setEnteredPin] = useState('');
 
+  // API Config & Connection State
+  const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [offlineQueueCount, setOfflineQueueCount] = useState(0);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
+
   // Shift & Register
-  const [activeShift, setActiveShift] = useState<{ id: string; openingCash: number; expectedCash: number } | null>(null);
+  const [activeShift, setActiveShift] = useState<{ id: string; opening_cash: number; expected_cash: number } | null>(null);
   const [openingCashInput, setOpeningCashInput] = useState('200');
 
-  // Network & Sync State
-  const [isOnline, setIsOnline] = useState(true);
-  const [offlineQueueCount, setOfflineQueueCount] = useState(0);
-
-  // Catalog Demo Data
-  const [categories] = useState([
+  // Catalog State
+  const [categories, setCategories] = useState<Category[]>([
     { id: 'ALL', name: 'Todos' },
-    { id: 'cat_coffee', name: 'Café' },
-    { id: 'cat_cold', name: 'Fríos' },
-    { id: 'cat_bakery', name: 'Panadería' },
-    { id: 'cat_sandwiches', name: 'Sandwiches' },
   ]);
-
-  const [products] = useState<Product[]>([
-    { id: 'prod_espresso', name: 'Café Espresso', price: 750, category_id: 'cat_coffee', color: '#78350f', stock_quantity: 140, barcode: '7750001001' },
-    { id: 'prod_americano', name: 'Café Americano', price: 900, category_id: 'cat_coffee', color: '#92400e', stock_quantity: 190, barcode: '7750001002' },
-    { id: 'prod_cappuccino', name: 'Cappuccino Clásico', price: 1200, category_id: 'cat_coffee', color: '#b45309', stock_quantity: 110, barcode: '7750001003' },
-    { id: 'prod_orange_juice', name: 'Jugo de Naranja', price: 1100, category_id: 'cat_cold', color: '#f59e0b', stock_quantity: 45, barcode: '7750002001' },
-    { id: 'prod_croissant', name: 'Croissant Mantequilla', price: 850, category_id: 'cat_bakery', color: '#d97706', stock_quantity: 25, barcode: '7750003001' },
-    { id: 'prod_butifarra', name: 'Butifarra Tradicional', price: 1850, category_id: 'cat_sandwiches', color: '#15803d', stock_quantity: 20, barcode: '7750004001' },
-  ]);
-
+  const [products, setProducts] = useState<Product[]>([]);
+  const [cashiers, setCashiers] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [barcodeInput, setBarcodeInput] = useState('');
 
-  // Cart
+  // Cart State
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedDiningOption, setSelectedDiningOption] = useState<'Dine-in' | 'Takeout' | 'Delivery'>('Dine-in');
 
-  // Checkout Modal
+  // Checkout Modal State
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'WALLET'>('CASH');
-  const [cashTendered, setCashTendered] = useState('');
+  const [cashTenderedInput, setCashTenderedInput] = useState('');
+  const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
 
-  // Receipt Modal
+  // Receipt Modal State
   const [completedOrder, setCompletedOrder] = useState<any>(null);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
 
-  // Sales History
+  // Sales History State
   const [salesHistory, setSalesHistory] = useState<any[]>([]);
 
-  // Format PEN Money
+  // Format PEN Currency
   const formatMoney = (cents: number) => `S/ ${(cents / 100).toFixed(2)}`;
 
-  // PIN Pad Logic
+  // 1. Initial Load: API URL, Catalog & Offline Queue Count
+  const loadInitialData = useCallback(async () => {
+    try {
+      const url = await getBaseApiUrl();
+      setApiUrl(url);
+
+      setIsLoadingCatalog(true);
+      const { data, fromCache } = await posApi.getCatalog();
+      setIsOnline(!fromCache);
+
+      if (data) {
+        if (data.categories) {
+          setCategories([{ id: 'ALL', name: 'Todos' }, ...data.categories]);
+        }
+        if (data.products) {
+          setProducts(data.products);
+        }
+        if (data.cashiers) {
+          setCashiers(data.cashiers);
+        }
+        if (data.currentShift) {
+          setActiveShift(data.currentShift);
+        }
+      }
+
+      // Check offline queue
+      const queue = await posApi.getOfflineQueue();
+      setOfflineQueueCount(queue.filter(e => e.status !== 'SYNCED').length);
+    } catch (err) {
+      console.warn('[App] Load error:', err);
+      setIsOnline(false);
+    } finally {
+      setIsLoadingCatalog(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
+
+  // 2. PIN Pad Logic
   const handlePinPress = (num: string) => {
     if (enteredPin.length < 4) {
       const next = enteredPin + num;
       setEnteredPin(next);
+
       if (next.length === 4) {
-        if (next === '1234') {
+        // Match against real cashiers from server/cache or fallback pins
+        const matched = cashiers.find((c: any) => c.pin === next || (next === '1234' && c.role === 'CASHIER') || (next === '9999' && c.role === 'ADMIN'));
+
+        if (matched) {
+          setCurrentEmployee({ id: matched.id, name: matched.name, role: matched.role });
+          setEnteredPin('');
+          setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');
+        } else if (next === '1234') {
           setCurrentEmployee({ id: 'usr_cashier', name: 'Carlos Mendoza', role: 'CASHIER' });
-          setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');
           setEnteredPin('');
+          setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');
         } else if (next === '9999') {
-          setCurrentEmployee({ id: 'usr_admin', name: 'Admin General', role: 'ADMIN' });
-          setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');
+          setCurrentEmployee({ id: 'usr_admin', name: 'Administrador', role: 'ADMIN' });
           setEnteredPin('');
+          setCurrentScreen(activeShift ? 'SALES' : 'REGISTER');
         } else {
-          Alert.alert('Error', 'PIN incorrecto. (Demo PIN: 1234)');
+          Alert.alert('Acceso Denegado', 'PIN incorrecto. (PINs válidos: 1234 o 9999)');
           setEnteredPin('');
         }
       }
     }
   };
 
-  // Start Shift
-  const handleOpenShift = () => {
+  // 3. Shift Opening via API or Local Fallback
+  const handleOpenShift = async () => {
     const openingCents = Math.round(parseFloat(openingCashInput || '0') * 100);
-    setActiveShift({
-      id: `shift_${Date.now()}`,
-      openingCash: openingCents,
-      expectedCash: openingCents,
-    });
+    try {
+      if (currentEmployee) {
+        const shiftData = await posApi.openShift(currentEmployee.id, openingCents);
+        setActiveShift(shiftData);
+      }
+    } catch (err: any) {
+      console.warn('[Shift] API openShift error, using local fallback:', err.message);
+      setActiveShift({
+        id: `shift_${Date.now()}`,
+        opening_cash: openingCents,
+        expected_cash: openingCents,
+      });
+    }
     setCurrentScreen('SALES');
   };
 
-  // Add to cart
+  // 4. Cart Add / Stepper
   const addToCart = (product: Product) => {
     setCart(prev => {
       const found = prev.find(item => item.productId === product.id);
       if (found) {
         return prev.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item);
       }
-      return [...prev, { id: `ci_${Date.now()}_${product.id}`, productId: product.id, name: product.name, price: product.price, quantity: 1 }];
+      return [
+        ...prev,
+        {
+          id: `ci_${Date.now()}_${product.id}`,
+          productId: product.id,
+          name: product.name,
+          price: product.price,
+          quantity: 1,
+          selectedModifiers: [],
+        }
+      ];
     });
   };
 
@@ -141,69 +213,152 @@ export default function App() {
     }).filter(Boolean) as CartItem[]);
   };
 
-  // Calculations
+  // 5. Barcode Scanner Keyboard Handler
+  const handleBarcodeSubmit = () => {
+    if (!barcodeInput.trim()) return;
+    const code = barcodeInput.trim();
+    const found = products.find(p => p.barcode === code || p.sku === code);
+    if (found) {
+      addToCart(found);
+      setBarcodeInput('');
+    } else {
+      Alert.alert('No encontrado', `No se encontró producto con código: ${code}`);
+    }
+  };
+
+  // 6. Autoritative Minor-Unit Calculations
   const { subtotalCents, taxCents, grandTotalCents } = useMemo(() => {
     const sub = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-    const tax = Math.round(sub - (sub / 1.18)); // IGV 18% included
+    // IGV 18% included
+    const tax = Math.round(sub - (sub / 1.18));
     return { subtotalCents: sub, taxCents: tax, grandTotalCents: sub };
   }, [cart]);
 
-  // Execute Checkout
-  const handleConfirmCheckout = () => {
-    const tenderedCents = paymentMethod === 'CASH' ? Math.round(parseFloat(cashTendered || '0') * 100) : grandTotalCents;
-    if (tenderedCents < grandTotalCents) {
-      Alert.alert('Error', 'Monto recibido es menor al total');
+  // 7. Atomic Checkout Execution (Direct API or Persistent Offline Queue)
+  const handleConfirmCheckout = async () => {
+    if (cart.length === 0) return;
+
+    const tenderedCents = paymentMethod === 'CASH'
+      ? Math.round(parseFloat(cashTenderedInput || '0') * 100)
+      : grandTotalCents;
+
+    if (paymentMethod === 'CASH' && tenderedCents < grandTotalCents) {
+      Alert.alert('Monto Insuficiente', `Monto recibido (${formatMoney(tenderedCents)}) es menor al total (${formatMoney(grandTotalCents)})`);
       return;
     }
 
-    const newOrder = {
-      id: `ord_${Date.now()}`,
-      receiptNumber: `REC-${Date.now().toString().slice(-4)}`,
-      date: new Date().toLocaleTimeString(),
-      items: [...cart],
-      total: grandTotalCents,
+    const idempotencyKey = `idem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const checkoutPayload = {
+      idempotencyKey,
+      userId: currentEmployee?.id || 'usr_cashier',
+      shiftId: activeShift?.id || null,
       paymentMethod,
       cashTendered: tenderedCents,
-      changeDue: tenderedCents - grandTotalCents,
-      diningOption: selectedDiningOption,
-      cashier: currentEmployee?.name,
-      synced: isOnline,
+      items: cart.map(item => ({
+        productId: item.productId,
+        variationId: item.variationId || null,
+        productName: item.name,
+        quantity: item.quantity,
+        unitPrice: item.price,
+        selectedModifiers: item.selectedModifiers,
+      })),
+      orderNote: `Pedido desde POS Android (${selectedDiningOption})`,
     };
 
-    if (!isOnline) {
-      setOfflineQueueCount(prev => prev + 1);
-    }
+    setIsSubmittingCheckout(true);
 
-    if (activeShift && paymentMethod === 'CASH') {
-      setActiveShift({ ...activeShift, expectedCash: activeShift.expectedCash + grandTotalCents });
-    }
+    try {
+      const { order, isOffline: wasOffline } = await posApi.checkout(checkoutPayload);
 
-    setSalesHistory(prev => [newOrder, ...prev]);
-    setCompletedOrder(newOrder);
-    setCart([]);
-    setShowCheckoutModal(false);
-    setShowReceiptModal(true);
-  };
+      // Add to sales history
+      setSalesHistory(prev => [order, ...prev]);
+      setCompletedOrder(order);
 
-  // Refund Order
-  const handleRefund = (orderId: string) => {
-    Alert.alert('Confirmar Reembolso', '¿Desea reembolsar esta venta y restaurar el inventario?', [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Reembolsar',
-        style: 'destructive',
-        onPress: () => {
-          setSalesHistory(prev => prev.map(o => o.id === orderId ? { ...o, refunded: true } : o));
-          Alert.alert('Éxito', 'Venta reembolsada correctamente');
-        }
+      // If recorded offline, increment badge count
+      if (wasOffline) {
+        setOfflineQueueCount(prev => prev + 1);
+        setIsOnline(false);
       }
-    ]);
+
+      // Update shift cash if cash payment
+      if (activeShift && paymentMethod === 'CASH') {
+        setActiveShift({
+          ...activeShift,
+          expected_cash: (activeShift.expected_cash || 0) + grandTotalCents,
+        });
+      }
+
+      setCart([]);
+      setShowCheckoutModal(false);
+      setShowReceiptModal(true);
+    } catch (err: any) {
+      Alert.alert('Error de Cobro', err.message || 'No se pudo procesar la venta');
+    } finally {
+      setIsSubmittingCheckout(false);
+    }
   };
 
+  // 8. Manual Sync Queue Trigger
+  const handleSyncNow = async () => {
+    setIsSyncing(true);
+    try {
+      const { syncedCount, failedCount } = await posApi.flushOfflineQueue();
+      const queue = await posApi.getOfflineQueue();
+      const remainingCount = queue.filter(e => e.status !== 'SYNCED').length;
+      setOfflineQueueCount(remainingCount);
+
+      if (syncedCount > 0) {
+        setIsOnline(true);
+        Alert.alert('Sincronización Exitosa', `${syncedCount} venta(s) sincronizadas con el servidor.`);
+        // Reload catalog to get fresh inventory
+        const { data } = await posApi.getCatalog();
+        if (data?.products) setProducts(data.products);
+      } else if (failedCount > 0) {
+        Alert.alert('Aviso', `Hubo fallas al sincronizar. Quedan ${remainingCount} pendientes.`);
+      } else {
+        Alert.alert('Al Día', 'No hay ventas pendientes de sincronizar.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error de Red', 'El servidor no está disponible para sincronizar.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 9. Refund Workflow
+  const handleRefund = async (order: any) => {
+    Alert.alert(
+      'Confirmar Reembolso',
+      `¿Desea reembolsar el ticket ${order.receipt_number || order.receiptNumber} (${formatMoney(order.total)})?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Reembolsar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (order.id && !order.is_offline) {
+                await posApi.refundOrder(order.id, currentEmployee?.id || 'usr_cashier', 'Devolución solicitada por cliente');
+              }
+              setSalesHistory(prev => prev.map(o => o.id === order.id ? { ...o, status: 'REFUNDED', refunded: true } : o));
+              Alert.alert('Éxito', 'Venta reembolsada e inventario restaurado.');
+            } catch (err: any) {
+              Alert.alert('Error', err.message || 'No se pudo procesar el reembolso');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Filtered Catalog
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       const matchCat = selectedCategory === 'ALL' || p.category_id === selectedCategory;
-      const matchQuery = !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.barcode?.includes(searchQuery);
+      const matchQuery = !searchQuery ||
+        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (p.barcode && p.barcode.includes(searchQuery)) ||
+        (p.sku && p.sku.toLowerCase().includes(searchQuery.toLowerCase()));
       return matchCat && matchQuery;
     });
   }, [products, selectedCategory, searchQuery]);
@@ -216,7 +371,7 @@ export default function App() {
       {currentScreen === 'PIN' && (
         <View style={styles.pinContainer}>
           <Text style={styles.pinTitle}>LOYVERSE POS ANDROID</Text>
-          <Text style={styles.pinSubtitle}>Ingrese PIN de Cajero (Demo: 1234)</Text>
+          <Text style={styles.pinSubtitle}>Ingrese PIN de Cajero (PINs: 1234 / 9999)</Text>
           <View style={styles.pinDotsRow}>
             {[0, 1, 2, 3].map(idx => (
               <View
@@ -233,7 +388,7 @@ export default function App() {
                 onPress={() => {
                   if (key === 'C') setEnteredPin('');
                   else if (key === 'OK') {
-                    if (enteredPin === '1234' || enteredPin === '9999') handlePinPress('');
+                    if (enteredPin.length === 4) handlePinPress('');
                   } else handlePinPress(key);
                 }}
               >
@@ -241,13 +396,20 @@ export default function App() {
               </TouchableOpacity>
             ))}
           </View>
+          <TouchableOpacity
+            style={styles.linkSettings}
+            onPress={() => setCurrentScreen('SETTINGS')}
+          >
+            <Text style={styles.linkSettingsText}>⚙ Ajustes de Servidor / Red</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* SCREEN 2: REGISTER & SHIFT OPENING */}
+      {/* SCREEN 2: SHIFT OPENING */}
       {currentScreen === 'REGISTER' && (
         <View style={styles.shiftOpenContainer}>
           <Text style={styles.modalTitle}>Apertura de Caja & Turno</Text>
+          <Text style={styles.shiftSubText}>Cajero: {currentEmployee?.name} ({currentEmployee?.role})</Text>
           <Text style={styles.label}>Fondo Inicial de Caja (S/):</Text>
           <TextInput
             style={styles.inputLarge}
@@ -261,53 +423,75 @@ export default function App() {
         </View>
       )}
 
-      {/* SCREEN 3: SALES SCREEN (MAIN LANDSCAPE TABLET POS) */}
+      {/* SCREEN 3: MAIN SALES SCREEN (TOUCH POS LANDSCAPE) */}
       {currentScreen === 'SALES' && (
         <View style={styles.mainLayout}>
-          {/* LEFT: Product Catalog & Category Nav (65%) */}
+          {/* LEFT PANEL: Catalog & Search (65%) */}
           <View style={styles.leftCatalog}>
-            {/* Top Toolbar */}
+            {/* Top Bar */}
             <View style={styles.topToolbar}>
               <View style={styles.userBadge}>
-                <Text style={styles.userBadgeText}>{currentEmployee?.name}</Text>
+                <Text style={styles.userBadgeText}>👤 {currentEmployee?.name}</Text>
               </View>
+
               <View style={styles.statusRow}>
+                {/* Network Status Badge */}
                 <TouchableOpacity
                   style={[styles.badge, isOnline ? styles.badgeOnline : styles.badgeOffline]}
                   onPress={() => setIsOnline(!isOnline)}
                 >
-                  <Text style={styles.badgeText}>{isOnline ? 'Online' : 'Offline'}</Text>
+                  <Text style={styles.badgeText}>{isOnline ? '● Online' : '○ Offline'}</Text>
                 </TouchableOpacity>
+
+                {/* Offline Queue Badge */}
                 {offlineQueueCount > 0 && (
-                  <View style={styles.syncBadge}>
-                    <Text style={styles.syncBadgeText}>{offlineQueueCount} pendientes</Text>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.syncBadge}
+                    onPress={handleSyncNow}
+                    disabled={isSyncing}
+                  >
+                    {isSyncing ? (
+                      <ActivityIndicator size="small" color="#fef08a" />
+                    ) : (
+                      <Text style={styles.syncBadgeText}>⚡ {offlineQueueCount} pendientes (Sincronizar)</Text>
+                    )}
+                  </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  style={styles.navBtn}
-                  onPress={() => setCurrentScreen('HISTORY')}
-                >
+
+                <TouchableOpacity style={styles.navBtn} onPress={() => setCurrentScreen('HISTORY')}>
                   <Text style={styles.navBtnText}>Historial</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.navBtn}
-                  onPress={() => setCurrentScreen('PIN')}
-                >
+
+                <TouchableOpacity style={styles.navBtn} onPress={() => setCurrentScreen('SETTINGS')}>
+                  <Text style={styles.navBtnText}>Ajustes</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.navBtnLock} onPress={() => setCurrentScreen('PIN')}>
                   <Text style={styles.navBtnText}>Bloquear</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
-            {/* Search Box */}
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Buscar por nombre o código de barra..."
-              placeholderTextColor="#94a3b8"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
+            {/* Barcode & Search Controls */}
+            <View style={styles.searchRow}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Buscar por nombre o descripción..."
+                placeholderTextColor="#94a3b8"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+              <TextInput
+                style={styles.barcodeInput}
+                placeholder="Escanear Código..."
+                placeholderTextColor="#94a3b8"
+                value={barcodeInput}
+                onChangeText={setBarcodeInput}
+                onSubmitEditing={handleBarcodeSubmit}
+              />
+            </View>
 
-            {/* Category Pills */}
+            {/* Category Filter Tabs */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
               {categories.map(cat => (
                 <TouchableOpacity
@@ -323,29 +507,36 @@ export default function App() {
             </ScrollView>
 
             {/* Product Grid */}
-            <FlatList
-              data={filteredProducts}
-              numColumns={3}
-              keyExtractor={item => item.id}
-              contentContainerStyle={styles.gridContent}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.productCard, { borderColor: item.color }]}
-                  onPress={() => addToCart(item)}
-                >
-                  <View style={[styles.colorBar, { backgroundColor: item.color }]} />
-                  <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
-                  <Text style={styles.productPrice}>{formatMoney(item.price)}</Text>
-                  <Text style={styles.stockText}>{item.stock_quantity} disp.</Text>
-                </TouchableOpacity>
-              )}
-            />
+            {isLoadingCatalog ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#10b981" />
+                <Text style={styles.loadingText}>Cargando catálogo del servidor...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredProducts}
+                numColumns={3}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.gridContent}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.productCard, { borderColor: item.color || '#334155' }]}
+                    onPress={() => addToCart(item)}
+                  >
+                    <View style={[styles.colorBar, { backgroundColor: item.color || '#10b981' }]} />
+                    <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
+                    <Text style={styles.productPrice}>{formatMoney(item.price)}</Text>
+                    <Text style={styles.stockText}>Stock: {item.stock_quantity}</Text>
+                  </TouchableOpacity>
+                )}
+              />
+            )}
           </View>
 
-          {/* RIGHT: Cart Panel & Checkout (35%) */}
+          {/* RIGHT PANEL: Cart & Totals (35%) */}
           <View style={styles.rightCart}>
             <View style={styles.cartHeader}>
-              <Text style={styles.cartTitle}>Ticket Actual</Text>
+              <Text style={styles.cartTitle}>Ticket Actual ({cart.reduce((a, b) => a + b.quantity, 0)})</Text>
               {cart.length > 0 && (
                 <TouchableOpacity onPress={() => setCart([])}>
                   <Text style={styles.clearText}>Vaciar</Text>
@@ -362,13 +553,13 @@ export default function App() {
                   onPress={() => setSelectedDiningOption(opt)}
                 >
                   <Text style={[styles.diningBtnText, selectedDiningOption === opt && styles.diningBtnTextActive]}>
-                    {opt}
+                    {opt === 'Dine-in' ? 'Mesa' : opt === 'Takeout' ? 'Llevar' : 'Delivery'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            {/* Cart Items List */}
+            {/* Cart Item Rows */}
             <ScrollView style={styles.cartList}>
               {cart.map(item => (
                 <View key={item.id} style={styles.cartItemRow}>
@@ -389,11 +580,11 @@ export default function App() {
                 </View>
               ))}
               {cart.length === 0 && (
-                <Text style={styles.emptyCartText}>El carrito está vacío</Text>
+                <Text style={styles.emptyCartText}>Toque un producto para agregar al pedido</Text>
               )}
             </ScrollView>
 
-            {/* Cart Footer & Totals */}
+            {/* Summary & Checkout Action */}
             <View style={styles.cartFooter}>
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Subtotal</Text>
@@ -411,7 +602,7 @@ export default function App() {
                 style={[styles.btnCheckout, cart.length === 0 && styles.btnDisabled]}
                 disabled={cart.length === 0}
                 onPress={() => {
-                  setCashTendered((grandTotalCents / 100).toFixed(2));
+                  setCashTenderedInput((grandTotalCents / 100).toFixed(2));
                   setShowCheckoutModal(true);
                 }}
               >
@@ -428,7 +619,7 @@ export default function App() {
           <View style={styles.topToolbar}>
             <Text style={styles.modalTitle}>Historial de Ventas</Text>
             <TouchableOpacity style={styles.btnSecondary} onPress={() => setCurrentScreen('SALES')}>
-              <Text style={styles.btnSecondaryText}>Volver a Ventas</Text>
+              <Text style={styles.btnSecondaryText}>← Volver al Terminal</Text>
             </TouchableOpacity>
           </View>
           <FlatList
@@ -437,22 +628,78 @@ export default function App() {
             renderItem={({ item }) => (
               <View style={styles.historyRow}>
                 <View>
-                  <Text style={styles.historyReceipt}>{item.receiptNumber}</Text>
-                  <Text style={styles.historyTime}>{item.date} • {item.paymentMethod}</Text>
+                  <Text style={styles.historyReceipt}>
+                    {item.receipt_number || item.receiptNumber}
+                    {item.is_offline ? ' [OFFLINE]' : ''}
+                  </Text>
+                  <Text style={styles.historyTime}>
+                    {new Date(item.created_at || Date.now()).toLocaleTimeString()} • {item.payments?.[0]?.payment_method || item.paymentMethod || 'CASH'}
+                  </Text>
                 </View>
                 <View style={styles.historyRight}>
                   <Text style={styles.historyTotal}>{formatMoney(item.total)}</Text>
-                  {item.refunded ? (
+                  {item.status === 'REFUNDED' || item.refunded ? (
                     <Text style={styles.refundBadge}>REEMBOLSADO</Text>
                   ) : (
-                    <TouchableOpacity style={styles.btnRefund} onPress={() => handleRefund(item.id)}>
+                    <TouchableOpacity style={styles.btnRefund} onPress={() => handleRefund(item)}>
                       <Text style={styles.btnRefundText}>Reembolsar</Text>
                     </TouchableOpacity>
                   )}
                 </View>
               </View>
             )}
+            ListEmptyComponent={
+              <Text style={styles.emptyCartText}>No hay ventas registradas en esta sesión.</Text>
+            }
           />
+        </View>
+      )}
+
+      {/* SCREEN 5: SETTINGS & NETWORK CONFIG */}
+      {currentScreen === 'SETTINGS' && (
+        <View style={styles.shiftOpenContainer}>
+          <Text style={styles.modalTitle}>Ajustes de Servidor & Conectividad</Text>
+          <Text style={styles.label}>URL Base de la API:</Text>
+          <TextInput
+            style={styles.inputUrl}
+            value={apiUrl}
+            onChangeText={setApiUrl}
+            placeholder="http://10.0.2.2:3000 o http://localhost:3000"
+            placeholderTextColor="#94a3b8"
+          />
+          <View style={styles.quickUrlRow}>
+            <TouchableOpacity
+              style={styles.btnSmall}
+              onPress={() => setApiUrl('http://10.0.2.2:3000')}
+            >
+              <Text style={styles.btnSmallText}>Android Emulator (10.0.2.2)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.btnSmall}
+              onPress={() => setApiUrl('http://localhost:3000')}
+            >
+              <Text style={styles.btnSmallText}>Localhost:3000</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.btnPrimary}
+            onPress={async () => {
+              await setBaseApiUrl(apiUrl);
+              Alert.alert('Guardado', 'URL del servidor actualizada.');
+              await loadInitialData();
+              setCurrentScreen('PIN');
+            }}
+          >
+            <Text style={styles.btnText}>Guardar y Reconectar</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.btnSecondary}
+            onPress={() => setCurrentScreen('PIN')}
+          >
+            <Text style={styles.btnSecondaryText}>Cancelar</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -460,7 +707,9 @@ export default function App() {
       <Modal visible={showCheckoutModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Seleccionar Forma de Pago</Text>
+            <Text style={styles.modalTitle}>Forma de Pago — Total: {formatMoney(grandTotalCents)}</Text>
+
+            {/* Payment Method Selector */}
             <View style={styles.payMethodsRow}>
               {(['CASH', 'CARD', 'WALLET'] as const).map(method => (
                 <TouchableOpacity
@@ -469,33 +718,63 @@ export default function App() {
                   onPress={() => setPaymentMethod(method)}
                 >
                   <Text style={[styles.payMethodText, paymentMethod === method && styles.payMethodTextActive]}>
-                    {method === 'CASH' ? 'Efectivo' : method === 'CARD' ? 'Tarjeta' : 'Yape/Plin'}
+                    {method === 'CASH' ? '💵 Efectivo' : method === 'CARD' ? '💳 Tarjeta' : '📱 Yape/Plin'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
+            {/* Cash Tender Input & Quick Denominations */}
             {paymentMethod === 'CASH' && (
               <View style={styles.cashSection}>
-                <Text style={styles.label}>Monto Recibido (S/):</Text>
+                <Text style={styles.label}>Monto Recibido en Efectivo (S/):</Text>
                 <TextInput
                   style={styles.inputLarge}
                   keyboardType="numeric"
-                  value={cashTendered}
-                  onChangeText={setCashTendered}
+                  value={cashTenderedInput}
+                  onChangeText={setCashTenderedInput}
                 />
+                <View style={styles.quickDenomRow}>
+                  {[10, 20, 50, 100].map(val => (
+                    <TouchableOpacity
+                      key={val}
+                      style={styles.denomChip}
+                      onPress={() => setCashTenderedInput(val.toString())}
+                    >
+                      <Text style={styles.denomChipText}>S/ {val}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.denomChip}
+                    onPress={() => setCashTenderedInput((grandTotalCents / 100).toFixed(2))}
+                  >
+                    <Text style={styles.denomChipText}>Exacto</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.changeText}>
-                  Vuelto: {formatMoney(Math.max(0, Math.round(parseFloat(cashTendered || '0') * 100) - grandTotalCents))}
+                  Vuelto a Entregar: {formatMoney(Math.max(0, Math.round(parseFloat(cashTenderedInput || '0') * 100) - grandTotalCents))}
                 </Text>
               </View>
             )}
 
             <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.btnCancel} onPress={() => setShowCheckoutModal(false)}>
+              <TouchableOpacity
+                style={styles.btnCancel}
+                onPress={() => setShowCheckoutModal(false)}
+                disabled={isSubmittingCheckout}
+              >
                 <Text style={styles.btnCancelText}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btnConfirm} onPress={handleConfirmCheckout}>
-                <Text style={styles.btnConfirmText}>Confirmar Pago</Text>
+              <TouchableOpacity
+                style={styles.btnConfirm}
+                onPress={handleConfirmCheckout}
+                disabled={isSubmittingCheckout}
+              >
+                {isSubmittingCheckout ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.btnConfirmText}>Confirmar Venta</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -506,23 +785,41 @@ export default function App() {
       <Modal visible={showReceiptModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.receiptPaper}>
-            <Text style={styles.receiptHeader}>CAFE DEL PARQUE</Text>
+            <Text style={styles.receiptHeader}>CAFÉ DEL PARQUE</Text>
             <Text style={styles.receiptSub}>RUC: 20601234567</Text>
             <Text style={styles.receiptSub}>BOLETA DE VENTA ELECTRÓNICA</Text>
-            <Text style={styles.receiptSub}>{completedOrder?.receiptNumber}</Text>
+            <Text style={styles.receiptReceiptNum}>{completedOrder?.receipt_number || completedOrder?.receiptNumber}</Text>
+            <Text style={styles.receiptDate}>{new Date(completedOrder?.created_at || Date.now()).toLocaleString()}</Text>
             <View style={styles.receiptDivider} />
-            {completedOrder?.items?.map((it: any) => (
-              <View key={it.id} style={styles.receiptItemRow}>
-                <Text style={styles.receiptItemName}>{it.quantity}x {it.name}</Text>
-                <Text style={styles.receiptItemPrice}>{formatMoney(it.price * it.quantity)}</Text>
+
+            {completedOrder?.items?.map((it: any, idx: number) => (
+              <View key={it.id || idx} style={styles.receiptItemRow}>
+                <Text style={styles.receiptItemName}>{it.quantity}x {it.product_name || it.name}</Text>
+                <Text style={styles.receiptItemPrice}>{formatMoney(it.total || (it.unit_price * it.quantity))}</Text>
               </View>
             ))}
+
             <View style={styles.receiptDivider} />
             <View style={styles.receiptItemRow}>
+              <Text style={styles.receiptSmall}>Subtotal:</Text>
+              <Text style={styles.receiptSmall}>{formatMoney(completedOrder?.subtotal || 0)}</Text>
+            </View>
+            <View style={styles.receiptItemRow}>
+              <Text style={styles.receiptSmall}>IGV (18% inc):</Text>
+              <Text style={styles.receiptSmall}>{formatMoney(completedOrder?.tax_total || 0)}</Text>
+            </View>
+            <View style={[styles.receiptItemRow, { marginTop: 4 }]}>
               <Text style={styles.receiptBold}>TOTAL:</Text>
               <Text style={styles.receiptBold}>{formatMoney(completedOrder?.total || 0)}</Text>
             </View>
-            <Text style={styles.receiptFooter}>¡Gracias por su compra!</Text>
+            {completedOrder?.payments?.[0]?.change_due !== undefined && (
+              <View style={styles.receiptItemRow}>
+                <Text style={styles.receiptSmall}>Vuelto:</Text>
+                <Text style={styles.receiptSmall}>{formatMoney(completedOrder.payments[0].change_due)}</Text>
+              </View>
+            )}
+            <Text style={styles.receiptFooter}>¡Gracias por su visita!</Text>
+
             <TouchableOpacity style={styles.btnPrimary} onPress={() => setShowReceiptModal(false)}>
               <Text style={styles.btnText}>Nueva Venta</Text>
             </TouchableOpacity>
@@ -544,9 +841,16 @@ const styles = StyleSheet.create({
   keypadGrid: { width: 280, flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center' },
   keypadButton: { width: 75, height: 75, borderRadius: 16, backgroundColor: '#1e293b', alignItems: 'center', justifyContent: 'center' },
   keypadButtonText: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
+  linkSettings: { marginTop: 24 },
+  linkSettingsText: { color: '#64748b', fontSize: 13 },
 
   shiftOpenContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  shiftSubText: { color: '#94a3b8', fontSize: 14, marginBottom: 12 },
   inputLarge: { width: '80%', height: 60, backgroundColor: '#0f172a', borderWidth: 1, borderColor: '#334155', borderRadius: 12, fontSize: 26, fontWeight: 'bold', color: '#10b981', textAlign: 'center', marginVertical: 16 },
+  inputUrl: { width: '80%', height: 48, backgroundColor: '#0f172a', borderWidth: 1, borderColor: '#334155', borderRadius: 10, color: '#fff', paddingHorizontal: 12, marginBottom: 16 },
+  quickUrlRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  btnSmall: { backgroundColor: '#1e293b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  btnSmallText: { color: '#94a3b8', fontSize: 11 },
 
   mainLayout: { flex: 1, flexDirection: 'row' },
   leftCatalog: { flex: 65, borderRightWidth: 1, borderColor: '#1e293b', padding: 12 },
@@ -563,15 +867,20 @@ const styles = StyleSheet.create({
   syncBadge: { backgroundColor: '#78350f', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   syncBadgeText: { color: '#fef08a', fontSize: 10, fontWeight: 'bold' },
   navBtn: { backgroundColor: '#1e293b', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  navBtnLock: { backgroundColor: '#334155', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
   navBtnText: { color: '#cbd5e1', fontSize: 12, fontWeight: '600' },
 
-  searchInput: { height: 42, backgroundColor: '#1e293b', borderRadius: 10, paddingHorizontal: 12, color: '#fff', fontSize: 13, marginBottom: 8 },
+  searchRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  searchInput: { flex: 2, height: 42, backgroundColor: '#1e293b', borderRadius: 10, paddingHorizontal: 12, color: '#fff', fontSize: 13 },
+  barcodeInput: { flex: 1, height: 42, backgroundColor: '#1e293b', borderRadius: 10, paddingHorizontal: 12, color: '#10b981', fontSize: 13, fontWeight: 'bold' },
   categoryScroll: { maxHeight: 42, marginBottom: 8 },
   catPill: { backgroundColor: '#1e293b', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, marginRight: 8 },
   catPillActive: { backgroundColor: '#10b981' },
   catPillText: { color: '#94a3b8', fontSize: 12, fontWeight: 'bold' },
   catPillTextActive: { color: '#fff' },
 
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText: { color: '#94a3b8', marginTop: 12, fontSize: 13 },
   gridContent: { paddingBottom: 20 },
   productCard: { flex: 1, minWidth: '30%', backgroundColor: '#0f172a', borderWidth: 1, borderRadius: 12, padding: 10, margin: 4, minHeight: 95 },
   colorBar: { height: 4, width: 24, borderRadius: 2, marginBottom: 6 },
@@ -623,7 +932,7 @@ const styles = StyleSheet.create({
   refundBadge: { color: '#f43f5e', fontSize: 10, fontWeight: 'bold', marginTop: 4 },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
-  modalBox: { width: 420, backgroundColor: '#0f172a', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#334155' },
+  modalBox: { width: 440, backgroundColor: '#0f172a', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#334155' },
   modalTitle: { fontSize: 16, fontWeight: 'bold', color: '#fff', textAlign: 'center', marginBottom: 14 },
   payMethodsRow: { flexDirection: 'row', gap: 10, marginVertical: 12 },
   payMethodBtn: { flex: 1, backgroundColor: '#1e293b', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
@@ -632,24 +941,30 @@ const styles = StyleSheet.create({
   payMethodTextActive: { color: '#10b981' },
   cashSection: { marginVertical: 10 },
   label: { color: '#94a3b8', fontSize: 12, fontWeight: 'bold' },
-  changeText: { color: '#10b981', fontSize: 14, fontWeight: 'bold', textAlign: 'right', marginTop: 6 },
+  quickDenomRow: { flexDirection: 'row', gap: 6, marginTop: 8 },
+  denomChip: { flex: 1, backgroundColor: '#1e293b', paddingVertical: 6, borderRadius: 6, alignItems: 'center' },
+  denomChipText: { color: '#10b981', fontSize: 11, fontWeight: 'bold' },
+  changeText: { color: '#10b981', fontSize: 14, fontWeight: 'bold', textAlign: 'right', marginTop: 8 },
   modalButtons: { flexDirection: 'row', gap: 10, marginTop: 14 },
   btnCancel: { flex: 1, backgroundColor: '#1e293b', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   btnCancelText: { color: '#94a3b8', fontWeight: 'bold' },
   btnConfirm: { flex: 1, backgroundColor: '#10b981', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   btnConfirmText: { color: '#fff', fontWeight: 'bold' },
 
-  receiptPaper: { width: 300, backgroundColor: '#fff', borderRadius: 8, padding: 16 },
+  receiptPaper: { width: 320, backgroundColor: '#fff', borderRadius: 8, padding: 16 },
   receiptHeader: { fontSize: 14, fontWeight: 'bold', textAlign: 'center', color: '#000' },
   receiptSub: { fontSize: 10, textAlign: 'center', color: '#333' },
+  receiptReceiptNum: { fontSize: 12, fontWeight: 'bold', textAlign: 'center', color: '#000', marginVertical: 2 },
+  receiptDate: { fontSize: 9, textAlign: 'center', color: '#666' },
   receiptDivider: { height: 1, backgroundColor: '#ccc', marginVertical: 8 },
   receiptItemRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
   receiptItemName: { fontSize: 11, color: '#000' },
   receiptItemPrice: { fontSize: 11, fontWeight: 'bold', color: '#000' },
-  receiptBold: { fontSize: 12, fontWeight: 'bold', color: '#000' },
+  receiptSmall: { fontSize: 10, color: '#444' },
+  receiptBold: { fontSize: 13, fontWeight: 'bold', color: '#000' },
   receiptFooter: { fontSize: 10, textAlign: 'center', marginVertical: 10, color: '#555' },
   btnPrimary: { backgroundColor: '#10b981', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   btnText: { color: '#fff', fontWeight: 'bold' },
-  btnSecondary: { backgroundColor: '#1e293b', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  btnSecondary: { backgroundColor: '#1e293b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginTop: 10, alignItems: 'center' },
   btnSecondaryText: { color: '#cbd5e1', fontSize: 12, fontWeight: 'bold' },
 });

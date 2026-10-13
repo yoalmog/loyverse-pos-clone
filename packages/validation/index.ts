@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const CheckoutPayloadSchema = z.object({
+  idempotencyKey: z.string().nullable().optional(),
   shiftId: z.string().nullable().optional(),
   userId: z.string().min(1, 'ID de cajero es obligatorio'),
   customerId: z.string().nullable().optional(),

@@ -213,4 +213,102 @@ test('POS Service Tests', async (t) => {
     const shiftAfter = posService.getCurrentShift();
     assert.equal(shiftAfter.expected_cash, shiftBefore.expected_cash - 1500);
   });
+
+  await t.test('9. Idempotent checkout prevents duplicate sale & double stock deduction', () => {
+    const key = `idem_${Date.now()}_test_suite`;
+    const stockBefore = db.prepare('SELECT stock_quantity FROM products WHERE id = ?').get('prod_espresso').stock_quantity;
+
+    const payload = {
+      idempotencyKey: key,
+      userId: 'usr_cashier',
+      paymentMethod: 'CASH',
+      cashTendered: 1000,
+      items: [
+        {
+          productId: 'prod_espresso',
+          productName: 'Café Espresso',
+          quantity: 1,
+          unitPrice: 750,
+          selectedModifiers: [],
+        }
+      ]
+    };
+
+    // First attempt
+    const sale1 = posService.processCheckout(payload);
+    assert.ok(sale1);
+    const stockAfter1 = db.prepare('SELECT stock_quantity FROM products WHERE id = ?').get('prod_espresso').stock_quantity;
+    assert.equal(stockAfter1, stockBefore - 1);
+
+    // Duplicate attempt with same idempotency key
+    const sale2 = posService.processCheckout(payload);
+    assert.ok(sale2);
+    assert.equal(sale2.id, sale1.id, 'Duplicate checkout must return original order ID');
+    assert.equal(sale2.receipt_number, sale1.receipt_number, 'Duplicate checkout must return original receipt');
+
+    // Stock must NOT be deducted again
+    const stockAfter2 = db.prepare('SELECT stock_quantity FROM products WHERE id = ?').get('prod_espresso').stock_quantity;
+    assert.equal(stockAfter2, stockAfter1, 'Stock must not be deducted on duplicate request');
+
+    // Total orders count in DB matching this idempotency_key must be exactly 1
+    const orderRows = db.prepare('SELECT COUNT(*) as count FROM orders WHERE idempotency_key = ?').get(key).count;
+    assert.equal(orderRows, 1, 'Only one order record must exist for this idempotency key');
+  });
+
+  await t.test('10. Failed checkout does not leave partial transactions', () => {
+    const ordersCountBefore = db.prepare('SELECT COUNT(*) as count FROM orders').get().count;
+    const itemsCountBefore = db.prepare('SELECT COUNT(*) as count FROM order_items').get().count;
+    const paymentsCountBefore = db.prepare('SELECT COUNT(*) as count FROM payments').get().count;
+    const invLogsCountBefore = db.prepare('SELECT COUNT(*) as count FROM inventory_logs').get().count;
+    const stockBefore = db.prepare('SELECT stock_quantity FROM products WHERE id = ?').get('prod_espresso').stock_quantity;
+
+    // Execute checkout that throws due to insufficient tender
+    assert.throws(() => {
+      posService.processCheckout({
+        userId: 'usr_cashier',
+        paymentMethod: 'CASH',
+        cashTendered: 100, // S/ 1.00 for S/ 7.50 item
+        items: [
+          {
+            productId: 'prod_espresso',
+            productName: 'Café Espresso',
+            quantity: 1,
+            unitPrice: 750,
+            selectedModifiers: [],
+          }
+        ]
+      });
+    }, /Monto recibido/);
+
+    // Verify zero orphaned records were created
+    const ordersCountAfter = db.prepare('SELECT COUNT(*) as count FROM orders').get().count;
+    const itemsCountAfter = db.prepare('SELECT COUNT(*) as count FROM order_items').get().count;
+    const paymentsCountAfter = db.prepare('SELECT COUNT(*) as count FROM payments').get().count;
+    const invLogsCountAfter = db.prepare('SELECT COUNT(*) as count FROM inventory_logs').get().count;
+    const stockAfter = db.prepare('SELECT stock_quantity FROM products WHERE id = ?').get('prod_espresso').stock_quantity;
+
+    assert.equal(ordersCountAfter, ordersCountBefore, 'No order row should remain on failure');
+    assert.equal(itemsCountAfter, itemsCountBefore, 'No order_item row should remain on failure');
+    assert.equal(paymentsCountAfter, paymentsCountBefore, 'No payment row should remain on failure');
+    assert.equal(invLogsCountAfter, invLogsCountBefore, 'No inventory_log should remain on failure');
+    assert.equal(stockAfter, stockBefore, 'Stock must remain unchanged on failure');
+  });
+
+  await t.test('11. Back Office displays consistent order and inventory state', () => {
+    const history = posService.getOrdersHistory(10);
+    assert.ok(Array.isArray(history));
+    assert.ok(history.length > 0);
+
+    // Latest order in history matches DB
+    const latest = history[0];
+    assert.ok(latest.receipt_number);
+    assert.ok(latest.total > 0);
+
+    // Single order query returns matching data with line items
+    const fetched = posService.getOrderById(latest.id);
+    assert.ok(fetched);
+    assert.equal(fetched.id, latest.id);
+    assert.ok(fetched.items.length > 0);
+    assert.ok(fetched.payments.length > 0);
+  });
 });
