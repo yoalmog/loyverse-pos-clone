@@ -18,6 +18,7 @@ export function getDb(): Database.Database {
   // Enable WAL mode and foreign keys for high performance and integrity
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
 
   initSchema(db);
   seedInitialData(db);

@@ -87,20 +87,27 @@ function generateReceiptNumber(): string {
   const row = db.prepare(`
     SELECT receipt_number FROM orders 
     WHERE receipt_number LIKE ? 
-    ORDER BY created_at DESC 
+    ORDER BY receipt_number DESC 
     LIMIT 1
   `).get(`${prefix}%`) as { receipt_number: string } | undefined;
 
   let nextSeq = 1;
   if (row && row.receipt_number) {
     const parts = row.receipt_number.split('-');
-    if (parts.length === 3) {
-      const lastSeq = parseInt(parts[2], 10);
+    if (parts.length >= 3) {
+      const lastSeq = parseInt(parts[parts.length - 1], 10);
       if (!isNaN(lastSeq)) nextSeq = lastSeq + 1;
     }
   }
 
-  return `${prefix}-${String(nextSeq).padStart(4, '0')}`;
+  let candidate = `${prefix}-${String(nextSeq).padStart(4, '0')}`;
+  // Guard against any collision
+  while (db.prepare('SELECT id FROM orders WHERE receipt_number = ?').get(candidate)) {
+    nextSeq++;
+    candidate = `${prefix}-${String(nextSeq).padStart(4, '0')}`;
+  }
+
+  return candidate;
 }
 
 export const posService = {
@@ -231,7 +238,7 @@ export const posService = {
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
         VALUES (?, ?, 'SHIFT_OPEN', 'shift', ?, ?)
-      `).run(`aud_${Date.now()}`, userId, shiftId, JSON.stringify({ openingCashCents }));
+      `).run(`aud_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, userId, shiftId, JSON.stringify({ openingCashCents }));
     })();
 
     return this.getCurrentShift();
@@ -257,7 +264,7 @@ export const posService = {
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
         VALUES (?, ?, 'SHIFT_CLOSE', 'shift', ?, ?)
-      `).run(`aud_${Date.now()}`, shift.user_id, shiftId, JSON.stringify({ expectedCash, actualCashCents, difference }));
+      `).run(`aud_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, shift.user_id, shiftId, JSON.stringify({ expectedCash, actualCashCents, difference }));
     })();
 
     return db.prepare('SELECT * FROM shifts WHERE id = ?').get(shiftId);
@@ -268,7 +275,7 @@ export const posService = {
     const shift = db.prepare("SELECT * FROM shifts WHERE id = ? AND status = 'OPEN'").get(input.shiftId) as any;
     if (!shift) throw new Error('Cannot record cash movement on a closed or nonexistent shift');
 
-    const movementId = `cm_${Date.now()}`;
+    const movementId = `cm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const multiplier = input.type === 'PAY_IN' ? 1 : -1;
     const newExpected = (shift.expected_cash || 0) + (input.amount * multiplier);
 
@@ -283,7 +290,7 @@ export const posService = {
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
         VALUES (?, ?, 'CASH_MOVEMENT', 'cash_movements', ?, ?)
-      `).run(`aud_${Date.now()}`, input.userId, movementId, JSON.stringify(input));
+      `).run(`aud_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, input.userId, movementId, JSON.stringify(input));
     })();
 
     return db.prepare('SELECT * FROM cash_movements WHERE id = ?').get(movementId);
@@ -297,7 +304,7 @@ export const posService = {
     const db = getDb();
 
     const orderId = input.savedOrderId || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const receiptNumber = generateReceiptNumber();
+    let receiptNumber = '';
     const now = new Date().toISOString();
 
     // 1. Calculate line items and subtotals
@@ -367,6 +374,8 @@ export const posService = {
 
     // ATOMIC TRANSACTION: Order + Items + Payment + Stock deduction + Shift update
     const executeTx = db.transaction(() => {
+      receiptNumber = generateReceiptNumber();
+
       // A. If this was a saved order being completed, delete previous items
       if (input.savedOrderId) {
         db.prepare('DELETE FROM order_items WHERE order_id = ?').run(input.savedOrderId);
@@ -453,7 +462,7 @@ export const posService = {
           id, order_id, payment_method, amount, cash_tendered, change_due, reference_number
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(
-        `pay_${Date.now()}`,
+        `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         orderId,
         input.paymentMethod,
         grandTotalCents,
@@ -480,7 +489,7 @@ export const posService = {
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
         VALUES (?, ?, 'CHECKOUT', 'orders', ?, ?)
-      `).run(`aud_${Date.now()}`, input.userId, orderId, JSON.stringify({ receiptNumber, grandTotalCents, paymentMethod: input.paymentMethod }));
+      `).run(`aud_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, input.userId, orderId, JSON.stringify({ receiptNumber, grandTotalCents, paymentMethod: input.paymentMethod }));
     });
 
     executeTx();
@@ -639,7 +648,7 @@ export const posService = {
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
         VALUES (?, ?, 'REFUND', 'orders', ?, ?)
-      `).run(`aud_${Date.now()}`, userId, orderId, JSON.stringify({ reason: reason || 'Devolución de venta', amount: order.total }));
+      `).run(`aud_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, userId, orderId, JSON.stringify({ reason: reason || 'Devolución de venta', amount: order.total }));
     })();
 
     return this.getOrderById(orderId);
