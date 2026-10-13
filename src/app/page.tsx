@@ -444,16 +444,26 @@ export default function POSPage() {
     setShowOpenTicketsModal(false);
   };
 
-  // Cashier PIN switch
-  const handlePinSubmit = () => {
-    const matched = cashiers.find(c => c.pin === enteredPin);
-    if (matched) {
-      setCurrentUser(matched);
-      setShowPinModal(false);
-      setEnteredPin('');
-      setPinError('');
-    } else {
-      setPinError('PIN incorrecto. Intente nuevamente.');
+  // Cashier PIN switch with server-side validation
+  const handlePinSubmit = async () => {
+    try {
+      const res = await fetch('/api/pos/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: enteredPin }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.user) {
+        setCurrentUser(data.user);
+        setShowPinModal(false);
+        setEnteredPin('');
+        setPinError('');
+      } else {
+        setPinError(data.error || 'PIN incorrecto. Intente nuevamente.');
+        setEnteredPin('');
+      }
+    } catch {
+      setPinError('Error de red al verificar PIN');
       setEnteredPin('');
     }
   };

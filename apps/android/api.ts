@@ -3,7 +3,7 @@
  * Connects to the shared backend (/api/pos/* and /api/sync)
  */
 
-import { storage } from './storage';
+import { storage } from './storage.ts';
 
 export const STORAGE_KEYS = {
   API_URL: 'loyverse_api_url',
@@ -224,13 +224,14 @@ export const posApi = {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const json = await res.json();
-      if (!json.success || !json.results) throw new Error('Sync batch failed');
+      const results = json.data?.results || json.results;
+      if (!json.success || !results) throw new Error('Sync batch failed');
 
       // Update local queue with results
       let syncedCount = 0;
       let failedCount = 0;
       const updatedQueue = queue.map(item => {
-        const result = json.results.find((r: any) => r.idempotencyKey === item.idempotencyKey || r.eventId === item.id);
+        const result = results.find((r: any) => r.idempotencyKey === item.idempotencyKey || r.eventId === item.id);
         if (result) {
           if (result.status === 'SYNCED' || result.status === 'ALREADY_SYNCED') {
             syncedCount++;
@@ -247,7 +248,7 @@ export const posApi = {
       const remaining = updatedQueue.filter(e => e.status !== 'SYNCED');
       await storage.setItem(STORAGE_KEYS.OFFLINE_QUEUE, JSON.stringify(remaining));
 
-      return { syncedCount, failedCount, results: json.results };
+      return { syncedCount, failedCount, results };
     } catch (err: any) {
       console.warn('[Sync] Flush batch failed:', err.message);
       return { syncedCount: 0, failedCount: pending.length, results: [] };

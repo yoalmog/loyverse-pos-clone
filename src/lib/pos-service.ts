@@ -309,7 +309,20 @@ export const posService = {
     if (input.idempotencyKey) {
       const existing = db.prepare('SELECT id FROM orders WHERE idempotency_key = ?').get(input.idempotencyKey) as { id: string } | undefined;
       if (existing) {
-        return this.getOrderById(existing.id)!;
+        const existingOrder = this.getOrderById(existing.id);
+        if (existingOrder) {
+          // Verify that payload matches the original order
+          const sameItemCount = existingOrder.items.length === input.items.length;
+          const sameItems = sameItemCount && input.items.every(item => {
+            const match = existingOrder.items.find((ei: any) => ei.product_id === item.productId);
+            return match && match.quantity === item.quantity;
+          });
+
+          if (!sameItems) {
+            throw new Error(`Idempotency conflict: Clave "${input.idempotencyKey}" ya fue utilizada con un pedido diferente.`);
+          }
+          return existingOrder;
+        }
       }
     }
 
@@ -612,6 +625,11 @@ export const posService = {
    */
   refundOrder(orderId: string, userId: string, reason?: string) {
     const db = getDb();
+    const user = db.prepare('SELECT id, role, active FROM users WHERE id = ?').get(userId) as any;
+    if (!user || user.active !== 1) {
+      throw new Error('Usuario no autorizado para ejecutar reembolsos');
+    }
+
     const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId) as any;
     if (!order) throw new Error('Comprobante no encontrado');
     if (order.status === 'REFUNDED') throw new Error('El comprobante ya fue reembolsado anteriormente');

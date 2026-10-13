@@ -144,6 +144,24 @@ export const syncService = {
       // 1. Check idempotency: Was this idempotencyKey already successfully processed?
       const existing = db.prepare('SELECT * FROM sync_queue WHERE idempotency_key = ?').get(evt.idempotencyKey) as any;
       if (existing && existing.status === 'SYNCED') {
+        const existingPayload = existing.payload_json ? JSON.parse(existing.payload_json) : null;
+        if (existingPayload && evt.eventType === 'CHECKOUT' && evt.payload?.items && existingPayload?.items) {
+          const sameCount = existingPayload.items.length === evt.payload.items.length;
+          const sameItems = sameCount && evt.payload.items.every((it: any) => {
+            const m = existingPayload.items.find((ei: any) => ei.productId === it.productId);
+            return m && m.quantity === it.quantity;
+          });
+          if (!sameItems) {
+            results.push({
+              eventId: evt.id,
+              idempotencyKey: evt.idempotencyKey,
+              status: 'FAILED',
+              error: `Idempotency conflict: Clave "${evt.idempotencyKey}" ya fue procesada con un pedido diferente.`,
+            });
+            continue;
+          }
+        }
+
         results.push({
           eventId: evt.id,
           idempotencyKey: evt.idempotencyKey,

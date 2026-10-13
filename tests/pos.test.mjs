@@ -311,4 +311,81 @@ test('POS Service Tests', async (t) => {
     assert.ok(fetched.items.length > 0);
     assert.ok(fetched.payments.length > 0);
   });
+
+  await t.test('12. Reusing an idempotency key with a different order payload is rejected', () => {
+    const key = `idem_conflict_${Date.now()}`;
+
+    // Original sale: 1 Espresso
+    const sale1 = posService.processCheckout({
+      idempotencyKey: key,
+      userId: 'usr_cashier',
+      paymentMethod: 'CASH',
+      cashTendered: 1000,
+      items: [
+        {
+          productId: 'prod_espresso',
+          productName: 'Café Espresso',
+          quantity: 1,
+          unitPrice: 750,
+          selectedModifiers: [],
+        }
+      ]
+    });
+    assert.ok(sale1);
+
+    // Mismatched sale with same key: 2 Americanos instead of 1 Espresso
+    assert.throws(() => {
+      posService.processCheckout({
+        idempotencyKey: key,
+        userId: 'usr_cashier',
+        paymentMethod: 'CASH',
+        cashTendered: 2000,
+        items: [
+          {
+            productId: 'prod_americano',
+            productName: 'Café Americano',
+            quantity: 2,
+            unitPrice: 900,
+            selectedModifiers: [],
+          }
+        ]
+      });
+    }, /Idempotency conflict/);
+  });
+
+  await t.test('13. Concurrent duplicate checkout requests do not create duplicate sales or double-deduct stock', async () => {
+    const concurrentKey = `idem_concurrent_${Date.now()}`;
+    const stockBefore = db.prepare('SELECT stock_quantity FROM products WHERE id = ?').get('prod_espresso').stock_quantity;
+
+    const payload = {
+      idempotencyKey: concurrentKey,
+      userId: 'usr_cashier',
+      paymentMethod: 'CASH',
+      cashTendered: 1000,
+      items: [
+        {
+          productId: 'prod_espresso',
+          productName: 'Café Espresso',
+          quantity: 1,
+          unitPrice: 750,
+          selectedModifiers: [],
+        }
+      ]
+    };
+
+    // Trigger concurrent checkouts
+    const [res1, res2] = await Promise.all([
+      Promise.resolve().then(() => posService.processCheckout(payload)),
+      Promise.resolve().then(() => posService.processCheckout(payload)),
+    ]);
+
+    assert.equal(res1.id, res2.id, 'Both concurrent calls must yield the same order ID');
+    assert.equal(res1.receipt_number, res2.receipt_number, 'Both concurrent calls must yield the same receipt');
+
+    const stockAfter = db.prepare('SELECT stock_quantity FROM products WHERE id = ?').get('prod_espresso').stock_quantity;
+    assert.equal(stockAfter, stockBefore - 1, 'Stock must only be deducted once despite concurrent calls');
+
+    const totalOrders = db.prepare('SELECT COUNT(*) as count FROM orders WHERE idempotency_key = ?').get(concurrentKey).count;
+    assert.equal(totalOrders, 1, 'Exactly one order row must exist in the database');
+  });
 });
