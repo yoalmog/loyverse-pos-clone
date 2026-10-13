@@ -19,6 +19,22 @@ export const STORAGE_KEYS = {
 export const DEFAULT_API_URL = process.env.POS_URL || 'http://10.0.2.2:3001';
 export const WEB_API_URL = process.env.POS_URL || 'http://localhost:3001';
 
+const DEFAULT_TIMEOUT_MS = 6000;
+
+export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function getBaseApiUrl(): Promise<string> {
   const saved = await storage.getItem(STORAGE_KEYS.API_URL);
   if (saved) return saved;
@@ -30,7 +46,14 @@ export async function getBaseApiUrl(): Promise<string> {
 }
 
 export async function setBaseApiUrl(url: string): Promise<void> {
-  await storage.setItem(STORAGE_KEYS.API_URL, url.replace(/\/+$/, ''));
+  const sanitized = url.trim().replace(/\/+$/, '');
+  const current = await storage.getItem(STORAGE_KEYS.API_URL);
+  if (current !== sanitized) {
+    // Invalidate prior server credentials when switching hosts
+    await storage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+    await storage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  }
+  await storage.setItem(STORAGE_KEYS.API_URL, sanitized);
 }
 
 export interface OfflineSyncEvent {
@@ -47,16 +70,58 @@ export interface OfflineSyncEvent {
 
 export const posApi = {
   /**
+   * Test network connectivity and measure latency to the target backend
+   */
+  async testConnection(targetUrl?: string): Promise<{
+    ok: boolean;
+    latencyMs: number;
+    url: string;
+    isHttps: boolean;
+    isLocal: boolean;
+    error?: string;
+  }> {
+    const url = (targetUrl || (await getBaseApiUrl())).replace(/\/+$/, '');
+    const isHttps = url.startsWith('https://');
+    const isLocal =
+      url.includes('localhost') ||
+      url.includes('127.0.0.1') ||
+      url.includes('10.0.2.2') ||
+      /^http:\/\/192\.168\./.test(url) ||
+      /^http:\/\/10\./.test(url) ||
+      /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\./.test(url);
+
+    const start = Date.now();
+    try {
+      const res = await fetchWithTimeout(`${url}/api/pos/catalog`, { method: 'GET' }, 5000);
+      const latencyMs = Date.now() - start;
+      if (res.ok) {
+        return { ok: true, latencyMs, url, isHttps, isLocal };
+      }
+      return { ok: false, latencyMs, url, isHttps, isLocal, error: `HTTP ${res.status}: ${res.statusText}` };
+    } catch (err: any) {
+      const latencyMs = Date.now() - start;
+      return {
+        ok: false,
+        latencyMs,
+        url,
+        isHttps,
+        isLocal,
+        error: err.name === 'AbortError' ? 'Tiempo de espera agotado (Timeout 5s)' : (err.message || 'Error de red'),
+      };
+    }
+  },
+
+  /**
    * Authenticate employee PIN with the server and store session token
    */
   async authenticatePin(pin: string): Promise<{ success: boolean; user?: any; token?: string; error?: string }> {
     const baseUrl = await getBaseApiUrl();
     try {
-      const res = await fetch(`${baseUrl}/api/pos/auth`, {
+      const res = await fetchWithTimeout(`${baseUrl}/api/pos/auth`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin }),
-      });
+      }, 5000);
       const json = await res.json();
       if (res.ok && json.success) {
         if (json.token) {
@@ -85,10 +150,10 @@ export const posApi = {
   async getCatalog(): Promise<{ data: any; fromCache: boolean }> {
     const baseUrl = await getBaseApiUrl();
     try {
-      const res = await fetch(`${baseUrl}/api/pos/catalog`, {
+      const res = await fetchWithTimeout(`${baseUrl}/api/pos/catalog`, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
-      });
+      }, 6000);
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const json = await res.json();
       if (json.success && json.data) {
@@ -127,14 +192,14 @@ export const posApi = {
     const baseUrl = await getBaseApiUrl();
 
     try {
-      const res = await fetch(`${baseUrl}/api/pos/checkout`, {
+      const res = await fetchWithTimeout(`${baseUrl}/api/pos/checkout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': payload.idempotencyKey,
         },
         body: JSON.stringify(payload),
-      });
+      }, 7000);
 
       if (res.ok) {
         const json = await res.json();
@@ -250,11 +315,11 @@ export const posApi = {
     }));
 
     try {
-      const res = await fetch(`${baseUrl}/api/sync`, {
+      const res = await fetchWithTimeout(`${baseUrl}/api/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ events: payloadEvents }),
-      });
+      }, 8000);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const json = await res.json();
@@ -294,11 +359,11 @@ export const posApi = {
    */
   async openShift(userId: string, openingCashCents: number): Promise<any> {
     const baseUrl = await getBaseApiUrl();
-    const res = await fetch(`${baseUrl}/api/pos/shift`, {
+    const res = await fetchWithTimeout(`${baseUrl}/api/pos/shift`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'OPEN', userId, openingCashCents }),
-    });
+    }, 5000);
     const json = await res.json();
     if (!json.success) throw new Error(json.error || 'Failed to open shift');
     return json.data;
@@ -309,11 +374,11 @@ export const posApi = {
    */
   async closeShift(shiftId: string, actualCashCents: number): Promise<any> {
     const baseUrl = await getBaseApiUrl();
-    const res = await fetch(`${baseUrl}/api/pos/shift`, {
+    const res = await fetchWithTimeout(`${baseUrl}/api/pos/shift`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'CLOSE', shiftId, actualCashCents }),
-    });
+    }, 5000);
     const json = await res.json();
     if (!json.success) throw new Error(json.error || 'Failed to close shift');
     return json.data;
@@ -324,11 +389,11 @@ export const posApi = {
    */
   async refundOrder(orderId: string, userId: string, reason: string): Promise<any> {
     const baseUrl = await getBaseApiUrl();
-    const res = await fetch(`${baseUrl}/api/pos/refund`, {
+    const res = await fetchWithTimeout(`${baseUrl}/api/pos/refund`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderId, userId, reason }),
-    });
+    }, 5000);
     const json = await res.json();
     if (!json.success) throw new Error(json.error || 'Failed to refund order');
     return json.data;

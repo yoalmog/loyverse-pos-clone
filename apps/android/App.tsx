@@ -58,6 +58,8 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [offlineQueueCount, setOfflineQueueCount] = useState(0);
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
+  const [testingConn, setTestingConn] = useState(false);
+  const [connStatus, setConnStatus] = useState<string | null>(null);
 
   // Shift & Register
   const [activeShift, setActiveShift] = useState<{ id: string; opening_cash: number; expected_cash: number } | null>(null);
@@ -669,36 +671,88 @@ export default function App() {
           <TextInput
             style={styles.inputUrl}
             value={apiUrl}
-            onChangeText={setApiUrl}
-            placeholder="http://192.168.1.50:3001 o http://localhost:3001"
+            onChangeText={(txt) => {
+              setApiUrl(txt);
+              setConnStatus(null);
+            }}
+            placeholder="http://192.168.1.50:3001 o https://mi-pos.com"
             placeholderTextColor="#94a3b8"
+            autoCapitalize="none"
+            autoCorrect={false}
           />
           <View style={styles.quickUrlRow}>
             <TouchableOpacity
               style={styles.btnSmall}
-              onPress={() => setApiUrl('http://192.168.1.50:3001')}
+              onPress={() => {
+                setApiUrl('http://192.168.1.50:3001');
+                setConnStatus(null);
+              }}
             >
               <Text style={styles.btnSmallText}>Wi-Fi LAN (192.168.1.50)</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.btnSmall}
-              onPress={() => setApiUrl('http://localhost:3001')}
+              onPress={() => {
+                setApiUrl('http://localhost:3001');
+                setConnStatus(null);
+              }}
             >
               <Text style={styles.btnSmallText}>USB / ADB (localhost:3001)</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.btnSmall}
-              onPress={() => setApiUrl('http://10.0.2.2:3001')}
+              onPress={() => {
+                setApiUrl('http://10.0.2.2:3001');
+                setConnStatus(null);
+              }}
             >
               <Text style={styles.btnSmallText}>Emulator (10.0.2.2:3001)</Text>
             </TouchableOpacity>
           </View>
 
+          {/* Connection Test Button */}
+          <TouchableOpacity
+            style={[styles.btnSmall, { backgroundColor: '#334155', marginTop: 12, paddingVertical: 10, alignSelf: 'center', width: '100%', alignItems: 'center' }]}
+            disabled={testingConn}
+            onPress={async () => {
+              setTestingConn(true);
+              setConnStatus('Probando conexión con el servidor...');
+              try {
+                const res = await posApi.testConnection(apiUrl);
+                if (res.ok) {
+                  setConnStatus(`✓ Conectado (${res.latencyMs}ms) • ${res.isHttps ? 'HTTPS Seguro' : 'HTTP Local'}`);
+                } else {
+                  setConnStatus(`✗ Error: ${res.error || 'No alcanzable'} (${res.latencyMs}ms)`);
+                }
+              } catch (err: any) {
+                setConnStatus(`✗ Error: ${err.message}`);
+              } finally {
+                setTestingConn(false);
+              }
+            }}
+          >
+            <Text style={[styles.btnSmallText, { fontSize: 13, fontWeight: 'bold' }]}>
+              {testingConn ? 'Verificando...' : '🔍 Probar Conexión'}
+            </Text>
+          </TouchableOpacity>
+
+          {connStatus ? (
+            <Text style={{
+              color: connStatus.startsWith('✓') ? '#22c55e' : '#ef4444',
+              fontSize: 12,
+              marginTop: 8,
+              textAlign: 'center',
+              fontWeight: '600'
+            }}>
+              {connStatus}
+            </Text>
+          ) : null}
+
           <TouchableOpacity
             style={styles.btnPrimary}
             onPress={async () => {
               await setBaseApiUrl(apiUrl);
-              Alert.alert('Guardado', 'URL del servidor actualizada.');
+              Alert.alert('Guardado', 'URL del servidor actualizada. Sesión reiniciada por seguridad.');
               await loadInitialData();
               setCurrentScreen('PIN');
             }}

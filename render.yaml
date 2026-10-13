@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: loyverse-pos-clone
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npx next start -p $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DEFAULT_CURRENCY
+        value: PEN
+      - key: DEFAULT_TAX_RATE
+        value: "0.18"
+      - key: DEFAULT_TAX_NAME
+        value: IGV
