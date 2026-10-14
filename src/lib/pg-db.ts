@@ -1,9 +1,47 @@
 import pg from 'pg';
 import fs from 'fs';
+import path from 'path';
 
 const { Pool } = pg;
 
 let poolInstance: pg.Pool | null = null;
+
+// Embedded public Supabase Root 2021 CA certificate for strict TLS validation
+const SUPABASE_ROOT_CA = `-----BEGIN CERTIFICATE-----
+MIIDxDCCAqygAwIBAgIUbLxMod62P2ktCiAkxnKJwtE9VPYwDQYJKoZIhvcNAQEL
+BQAwazELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5l
+dyBDYXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJh
+c2UgUm9vdCAyMDIxIENBMB4XDTIxMDQyODEwNTY1M1oXDTMxMDQyNjEwNTY1M1ow
+azELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5ldyBD
+YXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJhc2Ug
+Um9vdCAyMDIxIENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqQXW
+QyHOB+qR2GJobCq/CBmQ40G0oDmCC3mzVnn8sv4XNeWtE5XcEL0uVih7Jo4Dkx1Q
+DmGHBH1zDfgs2qXiLb6xpw/CKQPypZW1JssOTMIfQppNQ87K75Ya0p25Y3ePS2t2
+GtvHxNjUV6kjOZjEn2yWEcBdpOVCUYBVFBNMB4YBHkNRDa/+S4uywAoaTWnCJLUi
+cvTlHmMw6xSQQn1UfRQHk50DMCEJ7Cy1RxrZJrkXXRP3LqQL2ijJ6F4yMfh+Gyb4
+O4XajoVj/+R4GwywKYrrS8PrSNtwxr5StlQO8zIQUSMiq26wM8mgELFlS/32Uclt
+NaQ1xBRizkzpZct9DwIDAQABo2AwXjALBgNVHQ8EBAMCAQYwHQYDVR0OBBYEFKjX
+uXY32CztkhImng4yJNUtaUYsMB8GA1UdIwQYMBaAFKjXuXY32CztkhImng4yJNUt
+aUYsMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAB8spzNn+4VU
+tVxbdMaX+39Z50sc7uATmus16jmmHjhIHz+l/9GlJ5KqAMOx26mPZgfzG7oneL2b
+VW+WgYUkTT3XEPFWnTp2RJwQao8/tYPXWEJDc0WVQHrpmnWOFKU/d3MqBgBm5y+6
+jB81TU/RG2rVerPDWP+1MMcNNy0491CTL5XQZ7JfDJJ9CCmXSdtTl4uUQnSuv/Qx
+Cea13BX2ZgJc7Au30vihLhub52De4P/4gonKsNHYdbWjg7OWKwNv/zitGDVDB9Y2
+CMTyZKG3XEu5Ghl1LEnI3QmEKsqaCLv12BnVjbkSeZsMnevJPs1Ye6TjjJwdik5P
+o/bKiIz+Fq8=
+-----END CERTIFICATE-----`;
+
+function getTrustedCaCert(): string {
+  const customCertPath = process.env.PG_SSL_CA_PATH || path.join(process.cwd(), 'certs', 'supabase-prod-ca-2021.crt');
+  if (fs.existsSync(customCertPath)) {
+    try {
+      return fs.readFileSync(customCertPath, 'utf8');
+    } catch {
+      // Fallback to embedded certificate
+    }
+  }
+  return SUPABASE_ROOT_CA;
+}
 
 function loadEnvFallback() {
   if (process.env.DATABASE_URL) return;
@@ -45,16 +83,20 @@ export function getPgPool(): pg.Pool {
     throw new Error('DATABASE_URL is not configured for PostgreSQL connection.');
   }
 
-  // Handle Supabase pooler SSL
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  // Strip query-string sslmode to let pg.Pool ssl options manage strict validation cleanly
   const sanitizedUrl = databaseUrl.replace(/[?&]sslmode=[^&]+/, '');
+  const caCert = getTrustedCaCert();
 
   poolInstance = new Pool({
     connectionString: sanitizedUrl,
-    ssl: { rejectUnauthorized: false },
-    max: parseInt(process.env.PG_MAX_CONNECTIONS || '10', 10),
+    ssl: {
+      rejectUnauthorized: true,
+      ca: caCert,
+    },
+    // Tailored for Supabase Transaction Pooler and Render Free Tier (512MB RAM)
+    max: parseInt(process.env.PG_MAX_CONNECTIONS || '5', 10),
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 15000,
+    connectionTimeoutMillis: 10000,
   });
 
   poolInstance.on('error', (err) => {
@@ -103,6 +145,8 @@ export async function checkPgHealth(): Promise<{ ok: boolean; latencyMs: number;
     return { ok: false, latencyMs, error: 'Unexpected response from database' };
   } catch (err: any) {
     const latencyMs = Date.now() - start;
-    return { ok: false, latencyMs, error: err.message };
+    // Sanitize any sensitive details from the error message
+    const safeError = err.message ? err.message.replace(/:[^@:]+@/, ':***@') : 'Database connection error';
+    return { ok: false, latencyMs, error: safeError };
   }
 }

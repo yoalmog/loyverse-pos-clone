@@ -35,11 +35,17 @@ test('SUPABASE POSTGRESQL ACCEPTANCE & CONSISTENCY SUITE', async (t) => {
   const dbUrl = process.env.DATABASE_URL;
   assert.ok(dbUrl, 'DATABASE_URL must be defined in .env.local');
 
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  const caCert = fs.existsSync('certs/supabase-prod-ca-2021.crt')
+    ? fs.readFileSync('certs/supabase-prod-ca-2021.crt', 'utf8')
+    : undefined;
+
   const sanitizedUrl = dbUrl.replace(/[?&]sslmode=[^&]+/, '');
   const pool = new Pool({
     connectionString: sanitizedUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: {
+      rejectUnauthorized: true,
+      ca: caCert,
+    },
     max: 3,
     connectionTimeoutMillis: 15000,
   });

@@ -5,6 +5,7 @@ import { getDb } from '@/lib/db.ts';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  const isProduction = process.env.NODE_ENV === 'production';
   const start = Date.now();
   let dbStatus = 'disconnected';
   let latencyMs = 0;
@@ -20,7 +21,13 @@ export async function GET() {
       } else {
         dbStatus = 'error';
       }
+    } else if (isProduction) {
+      // In production, fallback to SQLite is strictly forbidden.
+      // Must return unhealthy (503) if PostgreSQL is not configured.
+      dialect = 'postgresql';
+      dbStatus = 'unconfigured';
     } else {
+      // Local development or non-production test fallback only
       dialect = 'sqlite';
       const db = getDb();
       const res = db.prepare('SELECT 1 as alive').get() as { alive: number } | undefined;
@@ -29,12 +36,13 @@ export async function GET() {
         latencyMs = Date.now() - start;
       }
     }
-  } catch (err: any) {
+  } catch {
     dbStatus = 'error';
   }
 
   const isHealthy = dbStatus === 'connected';
 
+  // Sanitize all output: never expose connection strings, passwords, or stack traces
   return NextResponse.json(
     {
       status: isHealthy ? 'healthy' : 'unhealthy',
@@ -42,7 +50,7 @@ export async function GET() {
       dialect,
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.floor(process.uptime()),
-      latencyMs,
+      latencyMs: isHealthy ? latencyMs : undefined,
     },
     {
       status: isHealthy ? 200 : 503,

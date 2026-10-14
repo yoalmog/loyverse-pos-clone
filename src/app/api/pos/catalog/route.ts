@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { posService } from '@/lib/pos-service.ts';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const catalog = posService.getCatalog();

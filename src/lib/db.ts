@@ -7,6 +7,15 @@ let dbInstance: Database.Database | null = null;
 export function getDb(): Database.Database {
   if (dbInstance) return dbInstance;
 
+  // Strict guard: Disallow silent fallback to ephemeral SQLite in production
+  if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_SQLITE_IN_PRODUCTION) {
+    throw new Error(
+      '[CRITICAL PRODUCTION SAFETY GUARD] SQLite fallback is strictly forbidden in production. ' +
+      'All POS, Back Office, and Sync operations must use PostgreSQL when deployed. ' +
+      'DATABASE_URL must be configured and services must connect to PostgreSQL.'
+    );
+  }
+
   const dataDir = path.join(process.cwd(), 'data');
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });

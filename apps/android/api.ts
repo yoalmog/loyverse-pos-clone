@@ -15,9 +15,9 @@ export const STORAGE_KEYS = {
   SESSION_TOKEN: 'loyverse_session_token',
 };
 
-// Default API URL: 10.0.2.2:3001 is Android Emulator localhost alias, localhost:3001 for web/desktop
-export const DEFAULT_API_URL = process.env.POS_URL || 'http://10.0.2.2:3001';
-export const WEB_API_URL = process.env.POS_URL || 'http://localhost:3001';
+// Default API URL: supports build-time EXPO_PUBLIC_POS_URL, with local fallback for emulator
+export const DEFAULT_API_URL = process.env.EXPO_PUBLIC_POS_URL || process.env.POS_URL || 'http://10.0.2.2:3001';
+export const WEB_API_URL = process.env.EXPO_PUBLIC_POS_URL || process.env.POS_URL || 'http://localhost:3001';
 
 const DEFAULT_TIMEOUT_MS = 6000;
 

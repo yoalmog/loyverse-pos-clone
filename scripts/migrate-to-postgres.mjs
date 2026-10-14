@@ -137,11 +137,16 @@ export async function runMigration(options = {}) {
   }
 
   // 2. Connect to PostgreSQL
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  const caCert = fs.existsSync('certs/supabase-prod-ca-2021.crt')
+    ? fs.readFileSync('certs/supabase-prod-ca-2021.crt', 'utf8')
+    : undefined;
   const sanitizedUrl = databaseUrl.replace(/[?&]sslmode=[^&]+/, '');
   const pool = new Pool({
     connectionString: sanitizedUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: {
+      rejectUnauthorized: true,
+      ca: caCert,
+    },
     max: 5,
     connectionTimeoutMillis: 15000,
   });
