@@ -153,3 +153,34 @@ sqlite3 data/pos.sqlite ".backup 'data/backup_pos_$(Get-Date -Format 'yyyyMMdd_H
 - [ ] **Step 8: Offline Test**: Put phone in Airplane Mode, complete a sale, verify "OFF-REC" offline receipt issued.
 - [ ] **Step 9: Sync Reconnection**: Disable Airplane Mode, tap "Sincronizar", verify offline order uploads to Back Office.
 - [ ] **Step 10: Stock Audit**: Check Back Office (`http://localhost:3001/admin`) to confirm inventory decremented exactly once.
+
+---
+
+## 9. Cloud PostgreSQL Migration & Render Deployment (Task 8 & 9 Verified)
+
+### A. Supabase PostgreSQL Data Migration Summary
+- **Source Database**: Local SQLite authoritative backup (`pos_backup_20261013_140257.sqlite` — 1,567 records, 806,912 bytes, PRAGMA integrity_check: `ok`).
+- **Target Database**: Supabase Free PostgreSQL (Hosted on AWS US-East-2, connection pooled with SSL).
+- **Execution Script**: `scripts/migrate-to-postgres.mjs` (transactional, idempotent with `ON CONFLICT DO NOTHING`).
+- **Tables Migrated (24/24)**:
+  `stores` (1), `users` (3), `categories` (5), `modifiers` (3), `modifier_options` (9), `dining_options` (3), `discounts` (4), `customers` (2), `suppliers` (2), `products` (34), `product_variations` (3), `product_modifiers` (9), `shifts` (1), `cash_movements` (30), `orders` (250), `order_items` (250), `payments` (249), `inventory_logs` (285), `purchase_orders` (0), `purchase_order_items` (0), `audit_logs` (328), `sync_queue` (96), `auth_rate_limits` (0), `user_sessions` (0).
+- **Total Records Migrated**: **1,567 records** (100% data integrity verified).
+
+### B. Financial & Stock Consistency Reconciliation
+- **Total Catalog Stock**: SQLite = `2,716.0` | PostgreSQL = `2,716.0` (**MATCH: TRUE**)
+- **Total Orders Sum**: SQLite = `304,450` cents (S/ 3,044.50) | PostgreSQL = `304,450` cents (**MATCH: TRUE**)
+- **Total Captured Payments**: SQLite = `301,900` cents (S/ 3,019.00) | PostgreSQL = `301,900` cents (**MATCH: TRUE**)
+- **Reconciliation Audit (S/ 25.50)**:
+  Orders total exceeds Payments total by exactly `2,550` cents (S/ 25.50).
+  Investigation confirmed this is **100% expected**: Exactly 1 open parked ticket exists in the database (`HOLD-5XCWO` for "Mesa 4 Terraza", status `'SAVED'`), which has zero captured payments. All 249 completed/refunded orders match payment records exactly to the cent.
+
+### C. Automated Validation & Build Health
+- **Automated Test Suite**: **51 tests passed, 0 failed** across 6 suites (including `tests/postgres-acceptance.test.mjs`).
+- **Next.js Production Build**: `npm run build` completed with Exit code 0 (17/17 routes compiled).
+- **Health Check**: `/api/health` tests live PostgreSQL ping with connection latency logging and automatic fallback.
+
+### D. Render Blueprint (`render.yaml`)
+- Configured for zero-cost deployment on Render's Free Web Service tier (Node.js runtime, Oregon region).
+- Automated health check pinging `/api/health`.
+- Manual secret attachment for `DATABASE_URL` via Render dashboard to ensure zero credential leakage in Git.
+

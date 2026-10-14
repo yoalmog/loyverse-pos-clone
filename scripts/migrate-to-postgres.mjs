@@ -11,6 +11,31 @@ import path from 'path';
 
 const { Pool } = pg;
 
+function loadEnv() {
+  for (const envFile of ['.env.local', '.env']) {
+    if (fs.existsSync(envFile)) {
+      const lines = fs.readFileSync(envFile, 'utf-8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx !== -1) {
+            const key = trimmed.slice(0, eqIdx).trim();
+            let val = trimmed.slice(eqIdx + 1).trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+              val = val.slice(1, -1);
+            }
+            if (!process.env[key]) {
+              process.env[key] = val;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+loadEnv();
+
 const DEFAULT_BACKUP_PATH = 'C:\\Users\\Usuario\\.gemini\\antigravity-ide\\brain\\1fc8bd1e-2d63-4082-a9a1-89bd751986e0\\backups\\pos_backup_20261013_140257.sqlite';
 const SCHEMA_FILE = path.resolve('migrations/001_initial_schema.sql');
 
@@ -46,11 +71,15 @@ export async function runMigration(options = {}) {
   const databaseUrl = options.databaseUrl || process.env.DATABASE_URL;
   const isDryRun = options.dryRun || !databaseUrl;
 
+  const maskedTarget = databaseUrl 
+    ? 'LIVE SUPABASE POSTGRESQL (host: ' + (databaseUrl.split('@')[1]?.split('/')[0] || 'remote') + ')'
+    : 'DRY RUN (Simulated)';
+
   console.log('='.repeat(70));
   console.log('LOYVERSE POS CLONE — SQLITE TO POSTGRESQL DATA MIGRATION');
   console.log('='.repeat(70));
   console.log(`SQLite Source: ${sqlitePath}`);
-  console.log(`Target Mode:   ${isDryRun ? 'DRY RUN (Simulated)' : 'LIVE POSTGRESQL (SSL)'}`);
+  console.log(`Target Mode:   ${maskedTarget}`);
   console.log(`Timestamp:     ${new Date().toISOString()}`);
   console.log('-'.repeat(70));
 
@@ -108,11 +137,13 @@ export async function runMigration(options = {}) {
   }
 
   // 2. Connect to PostgreSQL
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  const sanitizedUrl = databaseUrl.replace(/[?&]sslmode=[^&]+/, '');
   const pool = new Pool({
-    connectionString: databaseUrl,
+    connectionString: sanitizedUrl,
     ssl: { rejectUnauthorized: false },
     max: 5,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 15000,
   });
 
   const client = await pool.connect();
