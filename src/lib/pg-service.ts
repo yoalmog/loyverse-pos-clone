@@ -1027,9 +1027,9 @@ export const backofficePgService = {
 
     await queryPg(`
       INSERT INTO products (
-        id, category_id, name, description, price, cost, sku, barcode, color,
+        id, category_id, name, description, price, cost, sku, barcode, image_url, color,
         track_stock, stock_quantity, low_stock_threshold, is_composite, active, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 0, 1, $13, $14)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 0, 1, $14, $15)
     `, [
       id,
       body.category_id || null,
@@ -1039,6 +1039,7 @@ export const backofficePgService = {
       Math.round(Number(body.cost) || 0),
       body.sku || null,
       body.barcode || null,
+      body.image_url || null,
       body.color || '#10b981',
       body.track_stock !== false ? 1 : 0,
       Number(body.stock_quantity) || 0,
@@ -1066,13 +1067,14 @@ export const backofficePgService = {
         cost = $5,
         sku = $6,
         barcode = $7,
-        color = $8,
-        track_stock = $9,
-        stock_quantity = $10,
-        low_stock_threshold = $11,
-        active = $12,
-        updated_at = $13
-      WHERE id = $14
+        image_url = $8,
+        color = $9,
+        track_stock = $10,
+        stock_quantity = $11,
+        low_stock_threshold = $12,
+        active = $13,
+        updated_at = $14
+      WHERE id = $15
     `, [
       body.category_id || null,
       body.name,
@@ -1081,6 +1083,7 @@ export const backofficePgService = {
       Math.round(body.cost || 0),
       body.sku || null,
       body.barcode || null,
+      body.image_url || null,
       body.color || '#10b981',
       body.track_stock ? 1 : 0,
       Number(body.stock_quantity || 0),

@@ -34,6 +34,7 @@ export default function AdminPage() {
     cost: '',
     sku: '',
     barcode: '',
+    image_url: '',
     stock_quantity: '',
     low_stock_threshold: '5',
     track_stock: true,
@@ -503,6 +504,7 @@ export default function AdminPage() {
                         cost: '',
                         sku: '',
                         barcode: '',
+                        image_url: '',
                         stock_quantity: '10',
                         low_stock_threshold: '5',
                         track_stock: true,
@@ -534,9 +536,25 @@ export default function AdminPage() {
                   <tbody className="divide-y divide-slate-800/60">
                     {products.map(p => (
                       <tr key={p.id} className="hover:bg-slate-800/40">
-                        <td className="p-4 font-semibold text-white flex items-center gap-2">
-                          <span className="h-3 w-3 rounded-full" style={{ backgroundColor: p.color || '#10b981' }} />
-                          {p.name}
+                        <td className="p-4 font-semibold text-white flex items-center gap-3">
+                          {p.image_url ? (
+                            <img 
+                              src={p.image_url} 
+                              alt={p.name} 
+                              className="h-10 w-10 rounded-xl object-cover border border-slate-700/80 shadow-sm flex-shrink-0" 
+                            />
+                          ) : (
+                            <div 
+                              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-slate-800 font-bold text-white shadow-sm border border-slate-700/60"
+                              style={{ borderLeftColor: p.color || '#10b981', borderLeftWidth: '3px' }}
+                            >
+                              {p.name.charAt(0)}
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-bold text-white">{p.name}</div>
+                            {p.sku && <div className="text-[10px] text-slate-500 font-mono">{p.sku}</div>}
+                          </div>
                         </td>
                         <td className="p-4 text-slate-400">{p.category_name || 'Sin categoría'}</td>
                         <td className="p-4 font-bold text-emerald-400">{formatMoney(p.price)}</td>
@@ -560,6 +578,7 @@ export default function AdminPage() {
                                 cost: (p.cost / 100).toFixed(2),
                                 sku: p.sku || '',
                                 barcode: p.barcode || '',
+                                image_url: p.image_url || '',
                                 stock_quantity: String(p.stock_quantity),
                                 low_stock_threshold: String(p.low_stock_threshold),
                                 track_stock: p.track_stock === 1,
@@ -974,6 +993,26 @@ export default function AdminPage() {
                     onChange={e => setProductForm({ ...productForm, barcode: e.target.value })}
                     className="w-full rounded-xl bg-slate-950 border border-slate-700 p-2.5 text-sm text-white outline-none focus:border-indigo-500"
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase">URL de Foto del Producto</label>
+                <div className="flex gap-2 items-center mt-1">
+                  <input
+                    type="url"
+                    placeholder="https://images.unsplash.com/..."
+                    value={productForm.image_url}
+                    onChange={e => setProductForm({ ...productForm, image_url: e.target.value })}
+                    className="flex-1 rounded-xl bg-slate-950 border border-slate-700 p-2.5 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                  />
+                  {productForm.image_url && (
+                    <img 
+                      src={productForm.image_url} 
+                      alt="Preview" 
+                      className="h-9 w-9 rounded-lg object-cover border border-slate-700 flex-shrink-0" 
+                    />
+                  )}
                 </div>
               </div>
 
