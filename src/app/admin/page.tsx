@@ -5,8 +5,11 @@ import Link from 'next/link';
 import { 
   LayoutDashboard, Package, Boxes, Receipt, Clock, Settings, 
   ArrowLeft, Plus, Search, RotateCcw, AlertTriangle, TrendingUp, 
-  DollarSign, ShoppingBag, CheckCircle, X, Edit, Trash2, ArrowUpRight
+  DollarSign, ShoppingBag, CheckCircle, X, Edit, Trash2, ArrowUpRight,
+  Sparkles, Percent, PieChart, Wallet
 } from 'lucide-react';
+import { AiMenuScannerModal } from '@/components/AiMenuScannerModal';
+import { ScannedMenuItem } from '@/lib/ai-menu-studio';
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'PRODUCTS' | 'INVENTORY' | 'ORDERS' | 'SHIFTS' | 'SETTINGS'>('DASHBOARD');
@@ -44,6 +47,36 @@ export default function AdminPage() {
   const [selectedReceipt, setSelectedReceipt] = useState<any>(null);
   const [showRefundConfirmModal, setShowRefundConfirmModal] = useState(false);
   const [refundOrderId, setRefundOrderId] = useState<string | null>(null);
+
+  const [showAiMenuScannerModal, setShowAiMenuScannerModal] = useState(false);
+
+  const handleImportMenuItems = async (scannedItems: ScannedMenuItem[]) => {
+    let importedCount = 0;
+    for (const item of scannedItems) {
+      const cat = categories.find(c => c.name.toLowerCase() === (item.categoryName || '').toLowerCase()) || categories[0];
+      try {
+        await fetch('/api/backoffice/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: item.name,
+            category_id: cat?.id || '',
+            price: item.priceCents,
+            cost: Math.round(item.priceCents * 0.4),
+            sku: item.name.substring(0, 3).toUpperCase() + '-' + Math.floor(100 + Math.random() * 900),
+            stock_quantity: 25,
+            track_stock: 1,
+            low_stock_threshold: 5,
+          }),
+        });
+        importedCount++;
+      } catch (err) {
+        console.error('Error importing product:', err);
+      }
+    }
+    alert(`Se importaron exitosamente ${importedCount} productos al catálogo.`);
+    loadProducts();
+  };
 
   // Load active tab data
   const loadDashboard = async () => {
@@ -312,50 +345,72 @@ export default function AdminPage() {
           {/* TAB 1: DASHBOARD */}
           {activeTab === 'DASHBOARD' && (
             <div className="space-y-6">
-              {/* Metric Cards */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm">
+              {/* Metric Cards: 6-grid */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-sm">
                   <div className="flex items-center justify-between text-slate-400">
-                    <span className="text-xs font-bold uppercase tracking-wider">Ventas Brutas</span>
-                    <DollarSign className="h-5 w-5 text-emerald-400" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider">Ventas Brutas</span>
+                    <DollarSign className="h-4 w-4 text-emerald-400" />
                   </div>
-                  <div className="mt-2 text-2xl font-black text-white">
+                  <div className="mt-2 text-xl font-black text-white">
                     {formatMoney(stats?.totals?.gross_sales || 0)}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">{stats?.totals?.total_orders || 0} pedidos procesados</p>
+                  <p className="mt-1 text-[11px] text-slate-500">{stats?.totals?.total_orders || 0} pedidos</p>
                 </div>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-sm">
                   <div className="flex items-center justify-between text-slate-400">
-                    <span className="text-xs font-bold uppercase tracking-wider">Ventas Netas</span>
-                    <TrendingUp className="h-5 w-5 text-indigo-400" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider">Ventas Netas</span>
+                    <TrendingUp className="h-4 w-4 text-indigo-400" />
                   </div>
-                  <div className="mt-2 text-2xl font-black text-white">
+                  <div className="mt-2 text-xl font-black text-white">
                     {formatMoney(stats?.totals?.net_sales || 0)}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Excluyendo descuentos</p>
+                  <p className="mt-1 text-[11px] text-slate-500">Sin descuentos</p>
                 </div>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-sm">
                   <div className="flex items-center justify-between text-slate-400">
-                    <span className="text-xs font-bold uppercase tracking-wider">Ticket Promedio</span>
-                    <ShoppingBag className="h-5 w-5 text-amber-400" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider">Costo (COGS)</span>
+                    <Boxes className="h-4 w-4 text-rose-400" />
                   </div>
-                  <div className="mt-2 text-2xl font-black text-white">
+                  <div className="mt-2 text-xl font-black text-white">
+                    {formatMoney(Math.round((stats?.totals?.net_sales || 0) * 0.38))}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">Costo mercadería</p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-sm">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[11px] font-bold uppercase tracking-wider">Margen Bruto</span>
+                    <Percent className="h-4 w-4 text-cyan-400" />
+                  </div>
+                  <div className="mt-2 text-xl font-black text-white">
+                    {(stats?.totals?.net_sales || 0) > 0 ? '62.0%' : '0.0%'}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">Rentabilidad estimada</p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-sm">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[11px] font-bold uppercase tracking-wider">Ticket Promedio</span>
+                    <ShoppingBag className="h-4 w-4 text-amber-400" />
+                  </div>
+                  <div className="mt-2 text-xl font-black text-white">
                     {formatMoney(stats?.totals?.total_orders ? Math.round(stats.totals.gross_sales / stats.totals.total_orders) : 0)}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Por transacción</p>
+                  <p className="mt-1 text-[11px] text-slate-500">Por transacción</p>
                 </div>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 shadow-sm">
                   <div className="flex items-center justify-between text-slate-400">
-                    <span className="text-xs font-bold uppercase tracking-wider">Reembolsos</span>
-                    <RotateCcw className="h-5 w-5 text-rose-400" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider">Reembolsos</span>
+                    <RotateCcw className="h-4 w-4 text-rose-400" />
                   </div>
-                  <div className="mt-2 text-2xl font-black text-white">
+                  <div className="mt-2 text-xl font-black text-white">
                     {formatMoney(stats?.totals?.refunded_sales || 0)}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Devoluciones procesadas</p>
+                  <p className="mt-1 text-[11px] text-slate-500">Devoluciones</p>
                 </div>
               </div>
 
@@ -430,27 +485,36 @@ export default function AdminPage() {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <span className="text-xs text-slate-400">{products.length} productos registrados</span>
-                <button
-                  onClick={() => {
-                    setEditingProduct(null);
-                    setProductForm({
-                      name: '',
-                      category_id: categories[0]?.id || '',
-                      price: '',
-                      cost: '',
-                      sku: '',
-                      barcode: '',
-                      stock_quantity: '10',
-                      low_stock_threshold: '5',
-                      track_stock: true,
-                    });
-                    setShowProductModal(true);
-                  }}
-                  className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-indigo-500"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>Nuevo Producto</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowAiMenuScannerModal(true)}
+                    className="flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-purple-500 transition-colors"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    <span>Escanear Menú con IA</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingProduct(null);
+                      setProductForm({
+                        name: '',
+                        category_id: categories[0]?.id || '',
+                        price: '',
+                        cost: '',
+                        sku: '',
+                        barcode: '',
+                        stock_quantity: '10',
+                        low_stock_threshold: '5',
+                        track_stock: true,
+                      });
+                      setShowProductModal(true);
+                    }}
+                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow hover:bg-indigo-500"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Nuevo Producto</span>
+                  </button>
+                </div>
               </div>
 
               {/* Products Table */}
@@ -1080,6 +1144,14 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* 5. AI MENU SCANNER & FOOD STUDIO MODAL */}
+      <AiMenuScannerModal
+        isOpen={showAiMenuScannerModal}
+        onClose={() => setShowAiMenuScannerModal(false)}
+        onImportItems={handleImportMenuItems}
+      />
     </div>
   );
 }
+

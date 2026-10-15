@@ -5,9 +5,28 @@ import {
   Search, ShoppingCart, Plus, Minus, Trash2, Tag, User, 
   CreditCard, Banknote, Smartphone, DollarSign, Printer, 
   RotateCcw, Clock, Lock, CheckCircle2, ChevronRight, X, 
-  LayoutDashboard, AlertCircle, Bookmark, ArrowLeftRight, HelpCircle
+  LayoutDashboard, AlertCircle, Bookmark, ArrowLeftRight, HelpCircle,
+  Star, Grid3X3, LayoutGrid, Scan, Sliders, Languages, QrCode, FileText, Sparkles, Award
 } from 'lucide-react';
 import Link from 'next/link';
+
+import { DICTIONARY, LanguageCode, formatCurrency } from '@/lib/i18n';
+import { 
+  DEFAULT_A11Y_SETTINGS, 
+  AccessibilitySettings, 
+  soundFeedback, 
+  triggerHaptic, 
+  AccessibilityLiveAnnouncer, 
+  getColorblindFilterStyle 
+} from '@/lib/accessibility';
+import { DEFAULT_THEME_CONFIG, BackgroundPattern, getBackgroundPatternCss, THEME_PALETTES } from '@/lib/theming';
+
+import { AccessibilityModal } from '@/components/AccessibilityModal';
+import { DigitalQrModal } from '@/components/DigitalQrModal';
+import { LineItemCustomizerModal } from '@/components/LineItemCustomizerModal';
+import { PrePrintReceiptModal } from '@/components/PrePrintReceiptModal';
+import { SoftScannerModal } from '@/components/SoftScannerModal';
+import { OwnerAuthModal } from '@/components/OwnerAuthModal';
 
 interface Product {
   id: string;
@@ -19,6 +38,7 @@ interface Product {
   track_stock: number;
   barcode?: string;
   sku?: string;
+  is_favorite?: number | boolean;
   variations: any[];
   modifiers: any[];
 }
@@ -40,6 +60,8 @@ interface CartItem {
     price: number;
   }>;
   note?: string;
+  itemDiscountPercent?: number;
+  itemDiscountFixed?: number;
 }
 
 export default function POSPage() {
@@ -95,6 +117,26 @@ export default function POSPage() {
   const [showPinModal, setShowPinModal] = useState(false);
   const [enteredPin, setEnteredPin] = useState('');
   const [pinError, setPinError] = useState('');
+
+  // Enhanced UX, Theming, i18n & Accessibility States
+  const [currentLang, setCurrentLang] = useState<LanguageCode>('es');
+  const [currentPalette, setCurrentPalette] = useState<string>('emerald');
+  const [currentPattern, setCurrentPattern] = useState<BackgroundPattern>('dots');
+  const [a11y, setA11y] = useState<AccessibilitySettings>(DEFAULT_A11Y_SETTINGS);
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [compactView, setCompactView] = useState(false);
+
+  // Additional New Modals
+  const [showA11yModal, setShowA11yModal] = useState(false);
+  const [showSoftScannerModal, setShowSoftScannerModal] = useState(false);
+  const [showClearCartConfirm, setShowClearCartConfirm] = useState(false);
+  const [customizingItem, setCustomizingItem] = useState<CartItem | null>(null);
+  const [showPrePrintModal, setShowPrePrintModal] = useState(false);
+  const [showDigitalQrModal, setShowDigitalQrModal] = useState(false);
+  const [digitalQrWallet, setDigitalQrWallet] = useState<'YAPE' | 'PLIN'>('YAPE');
+  const [showOwnerAuthModal, setShowOwnerAuthModal] = useState(false);
+  const [ownerAuthAction, setOwnerAuthAction] = useState<(() => void) | null>(null);
+  const [loyaltyDiscountCents, setLoyaltyDiscountCents] = useState(0);
 
   // Barcode scanner buffer
   const barcodeBuffer = useRef('');
@@ -279,15 +321,17 @@ export default function POSPage() {
     for (const item of cart) {
       let modSum = 0;
       for (const m of item.selectedModifiers) modSum += m.price;
-      sub += Math.round((item.unitPrice + modSum) * item.quantity);
+      const baseLine = Math.round((item.unitPrice + modSum) * item.quantity);
+      const lineDisc = item.discountAmount || 0;
+      sub += Math.max(0, baseLine - lineDisc);
     }
 
-    let disc = 0;
+    let disc = loyaltyDiscountCents;
     if (cartDiscount) {
       if (cartDiscount.type === 'PERCENTAGE') {
-        disc = Math.round(sub * (cartDiscount.value / 100));
+        disc += Math.round(sub * (cartDiscount.value / 100));
       } else {
-        disc = Math.min(sub, cartDiscount.value);
+        disc += Math.min(sub, cartDiscount.value);
       }
     }
 
@@ -312,7 +356,7 @@ export default function POSPage() {
       taxCents: tax,
       grandTotalCents: total,
     };
-  }, [cart, cartDiscount, store]);
+  }, [cart, cartDiscount, loyaltyDiscountCents, store]);
 
   // Currency Formatter
   const formatMoney = (cents: number) => {
@@ -320,15 +364,56 @@ export default function POSPage() {
     return `${sym} ${(cents / 100).toFixed(2)}`;
   };
 
-  // Filter Products
+  // Filter Products (Category, Search, and Favorites)
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
+      if (onlyFavorites && !p.is_favorite) return false;
       const matchCat = selectedCategory === 'ALL' || p.category_id === selectedCategory;
       const q = searchQuery.toLowerCase().trim();
       const matchSearch = !q || p.name.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q) || p.barcode?.includes(q);
       return matchCat && matchSearch;
     });
-  }, [products, selectedCategory, searchQuery]);
+  }, [products, selectedCategory, searchQuery, onlyFavorites]);
+
+  // Handle line item note & discount updates
+  const handleUpdateLineItem = (updates: { itemNote?: string; itemDiscountPercent?: number; itemDiscountFixed?: number }) => {
+    if (!customizingItem) return;
+    setCart(prev => prev.map(it => {
+      if (it.id === customizingItem.id) {
+        let disc = 0;
+        let modSum = 0;
+        for (const m of it.selectedModifiers) modSum += m.price;
+        const lineTotal = (it.unitPrice + modSum) * it.quantity;
+
+        if (updates.itemDiscountPercent) {
+          disc = Math.round(lineTotal * (updates.itemDiscountPercent / 100));
+        } else if (updates.itemDiscountFixed) {
+          disc = Math.min(lineTotal, updates.itemDiscountFixed);
+        }
+
+        return {
+          ...it,
+          note: updates.itemNote,
+          discountAmount: disc,
+        };
+      }
+      return it;
+    }));
+  };
+
+  // Customer loyalty points redemption
+  const handleRedeemPoints = () => {
+    if (!selectedCustomer || !selectedCustomer.points) return;
+    const available = Number(selectedCustomer.points);
+    if (available <= 0) return alert('El cliente no tiene puntos acumulados.');
+    
+    // 100 points = S/ 10.00 discount (10 cents per point)
+    const pointsToUse = Math.min(available, Math.floor(subtotalCents / 10));
+    const discountVal = pointsToUse * 10;
+    setLoyaltyDiscountCents(discountVal);
+    soundFeedback.playCheckoutChime();
+    AccessibilityLiveAnnouncer.announce(`Canjeados ${pointsToUse} puntos por descuento.`);
+  };
 
   // Open Checkout Modal
   const startCheckout = () => {
@@ -559,7 +644,11 @@ export default function POSPage() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+    <div 
+      dir={currentLang === 'he' || currentLang === 'ar' ? 'rtl' : 'ltr'}
+      style={getColorblindFilterStyle(a11y.colorblind)}
+      className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100"
+    >
       {/* LEFT AREA: Catalog & Grid (65% width) */}
       <div className="flex flex-1 flex-col border-r border-slate-800">
         {/* Top Navbar */}
@@ -600,11 +689,41 @@ export default function POSPage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            {/* Soft Scanner Button */}
+            <button
+              onClick={() => setShowSoftScannerModal(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:bg-slate-700"
+              title="Escanear Código de Barras"
+            >
+              <Scan className="h-4 w-4 text-emerald-400" />
+              <span className="hidden lg:inline">Escanear</span>
+            </button>
+
+            {/* Compact / Expanded View Toggle */}
+            <button
+              onClick={() => setCompactView(!compactView)}
+              className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:bg-slate-700"
+              title={compactView ? 'Vista Detallada' : 'Vista Compacta'}
+            >
+              {compactView ? <LayoutGrid className="h-4 w-4 text-cyan-400" /> : <Grid3X3 className="h-4 w-4 text-cyan-400" />}
+              <span className="hidden lg:inline">{compactView ? 'Detallado' : 'Compacto'}</span>
+            </button>
+
+            {/* Accessibility & Theme Button */}
+            <button
+              onClick={() => setShowA11yModal(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 transition-colors hover:bg-slate-700"
+              title="Accesibilidad, Idioma y Temas"
+            >
+              <Sliders className="h-4 w-4 text-purple-400" />
+              <span className="text-[11px] font-bold uppercase text-purple-300">{currentLang}</span>
+            </button>
+
             {/* USB Barcode status indicator */}
-            <div className="hidden sm:flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-xs text-slate-400 border border-slate-700">
+            <div className="hidden xl:flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-xs text-slate-400 border border-slate-700">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Lector USB Activo</span>
+              <span>USB Activo</span>
             </div>
 
             {/* Back Office Link */}
@@ -613,7 +732,7 @@ export default function POSPage() {
               className="flex items-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500"
             >
               <LayoutDashboard className="h-4 w-4" />
-              <span>Back Office</span>
+              <span className="hidden sm:inline">Back Office</span>
             </Link>
           </div>
         </header>
@@ -642,10 +761,23 @@ export default function POSPage() {
 
           {/* Categories Pill Selector */}
           <div className="flex gap-2 overflow-x-auto py-1 scrollbar-none">
+            {/* Favorites Filter Pill */}
+            <button
+              onClick={() => setOnlyFavorites(!onlyFavorites)}
+              className={`flex items-center gap-1 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold uppercase tracking-wider transition-all ${
+                onlyFavorites
+                  ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              <Star className={`h-3.5 w-3.5 ${onlyFavorites ? 'fill-current text-slate-950' : 'text-amber-400'}`} />
+              <span>Favoritos</span>
+            </button>
+
             <button
               onClick={() => setSelectedCategory('ALL')}
               className={`whitespace-nowrap rounded-lg px-4 py-2 text-xs font-semibold uppercase tracking-wider transition-all ${
-                selectedCategory === 'ALL'
+                selectedCategory === 'ALL' && !onlyFavorites
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
@@ -655,9 +787,12 @@ export default function POSPage() {
             {categories.map(cat => (
               <button
                 key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => {
+                  setSelectedCategory(cat.id);
+                  setOnlyFavorites(false);
+                }}
                 className={`whitespace-nowrap rounded-lg px-4 py-2 text-xs font-semibold uppercase tracking-wider transition-all ${
-                  selectedCategory === cat.id
+                  selectedCategory === cat.id && !onlyFavorites
                     ? 'bg-emerald-600 text-white shadow-md'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
@@ -670,7 +805,11 @@ export default function POSPage() {
 
         {/* Product Grid */}
         <div className="flex-1 overflow-y-auto p-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5">
+          <div className={`grid gap-3 ${
+            compactView 
+              ? 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7' 
+              : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5'
+          }`}>
             {filteredProducts.map(product => {
               const isOutOfStock = product.track_stock === 1 && product.stock_quantity <= 0;
               const isLowStock = product.track_stock === 1 && product.stock_quantity > 0 && product.stock_quantity <= 5;
@@ -756,7 +895,7 @@ export default function POSPage() {
           </div>
           {cart.length > 0 && (
             <button
-              onClick={clearCart}
+              onClick={() => setShowClearCartConfirm(true)}
               className="text-xs font-medium text-rose-400 hover:text-rose-300"
             >
               Vaciar
@@ -816,7 +955,16 @@ export default function POSPage() {
             return (
               <div key={item.id} className="py-2.5 flex items-center justify-between gap-2">
                 <div className="flex-1">
-                  <h4 className="text-sm font-medium text-slate-100">{item.productName}</h4>
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-sm font-medium text-slate-100">{item.productName}</h4>
+                    <button
+                      onClick={() => setCustomizingItem(item)}
+                      title="Agregar nota o descuento por ítem"
+                      className="p-1 rounded text-slate-500 hover:text-emerald-400 transition-colors"
+                    >
+                      <Sliders className="h-3 w-3" />
+                    </button>
+                  </div>
                   {item.variationName && (
                     <span className="inline-block rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 mr-1">
                       {item.variationName}
@@ -827,8 +975,19 @@ export default function POSPage() {
                       +{m.optionName}
                     </span>
                   ))}
-                  <div className="mt-1 text-xs text-slate-400">
-                    {formatMoney(item.unitPrice)} c/u
+                  {item.note && (
+                    <div className="mt-0.5 flex items-center gap-1 text-[11px] text-amber-300 italic">
+                      <FileText className="h-3 w-3 inline text-amber-400" />
+                      <span>{item.note}</span>
+                    </div>
+                  )}
+                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
+                    <span>{formatMoney(item.unitPrice)} c/u</span>
+                    {item.discountAmount > 0 && (
+                      <span className="text-rose-400 font-semibold">
+                        -{formatMoney(item.discountAmount)}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -1068,6 +1227,27 @@ export default function POSPage() {
             </div>
 
             <div className="p-4 space-y-4 overflow-y-auto">
+              {/* Loyalty points redemption card */}
+              {selectedCustomer && Number(selectedCustomer.points) > 0 && (
+                <div className="flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-950/20 p-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Award className="h-4 w-4 text-amber-400" />
+                    <div>
+                      <span className="font-bold text-amber-300">{selectedCustomer.name}</span>
+                      <span className="text-slate-400 ml-1">tiene {selectedCustomer.points} pts</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRedeemPoints}
+                    disabled={loyaltyDiscountCents > 0}
+                    className="rounded-lg bg-amber-500/20 border border-amber-500/40 px-2.5 py-1 text-xs font-bold text-amber-300 hover:bg-amber-500/30 disabled:opacity-50"
+                  >
+                    {loyaltyDiscountCents > 0 ? 'Puntos Aplicados' : 'Canjear Puntos'}
+                  </button>
+                </div>
+              )}
+
               {/* Payment Method Tabs */}
               <div className="grid grid-cols-4 gap-2">
                 {[
@@ -1146,7 +1326,39 @@ export default function POSPage() {
 
               {/* CARD / DIGITAL WALLET REFERENCE */}
               {(paymentMethod === 'CARD' || paymentMethod === 'WALLET') && (
-                <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950 p-4">
+                <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950 p-4">
+                  {paymentMethod === 'WALLET' && (
+                    <div className="space-y-2 pb-2 border-b border-slate-800">
+                      <label className="text-xs font-semibold text-slate-400 uppercase">
+                        Presentar Código QR en Pantalla
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDigitalQrWallet('YAPE');
+                            setShowDigitalQrModal(true);
+                          }}
+                          className="flex items-center justify-center gap-2 rounded-xl bg-[#742384] p-3 text-xs font-bold text-white hover:bg-[#8e2ca2] transition-colors"
+                        >
+                          <QrCode className="h-4 w-4" />
+                          <span>QR Yape</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDigitalQrWallet('PLIN');
+                            setShowDigitalQrModal(true);
+                          }}
+                          className="flex items-center justify-center gap-2 rounded-xl bg-[#00a9e0] p-3 text-xs font-bold text-white hover:bg-[#1bc1fa] transition-colors"
+                        >
+                          <QrCode className="h-4 w-4" />
+                          <span>QR Plin</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <label className="text-xs font-semibold text-slate-400 uppercase">
                     Número de Operación / Referencia (Opcional)
                   </label>
@@ -1164,7 +1376,16 @@ export default function POSPage() {
               )}
             </div>
 
-            <div className="border-t border-slate-800 p-4">
+            <div className="border-t border-slate-800 p-4 space-y-2">
+              <button
+                type="button"
+                onClick={() => setShowPrePrintModal(true)}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 py-2.5 text-xs font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+              >
+                <FileText className="h-4 w-4 text-emerald-400" />
+                <span>Vista Previa de Comprobante (Pre-Print)</span>
+              </button>
+
               <button
                 onClick={handleCheckoutSubmit}
                 disabled={isProcessingCheckout || (paymentMethod === 'CASH' && (parseFloat(cashTendered || '0') * 100) < grandTotalCents)}
@@ -1650,6 +1871,133 @@ export default function POSPage() {
           </div>
         </div>
       )}
+
+      {/* 8. CLEAR CART CONFIRMATION MODAL */}
+      {showClearCartConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-white">¿Vaciar el carrito actual?</h3>
+            <p className="text-xs text-slate-400">Esta acción removerá todos los productos y notas del ticket actual.</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowClearCartConfirm(false)}
+                className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  clearCart();
+                  setShowClearCartConfirm(false);
+                }}
+                className="flex-1 rounded-xl bg-rose-600 py-2.5 text-xs font-bold text-white hover:bg-rose-500"
+              >
+                Sí, vaciar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9. ACCESSIBILITY, I18N & THEMES MODAL */}
+      <AccessibilityModal
+        isOpen={showA11yModal}
+        onClose={() => setShowA11yModal(false)}
+        currentLang={currentLang}
+        onSelectLang={setCurrentLang}
+        currentPalette={currentPalette}
+        onSelectPalette={setCurrentPalette}
+        currentPattern={currentPattern}
+        onSelectPattern={setCurrentPattern}
+        a11y={a11y}
+        onUpdateA11y={setA11y}
+      />
+
+      {/* 10. SOFT BARCODE SCANNER MODAL */}
+      <SoftScannerModal
+        isOpen={showSoftScannerModal}
+        onClose={() => setShowSoftScannerModal(false)}
+        products={products}
+        onProductScanned={(prod) => {
+          handleProductClick(prod);
+        }}
+      />
+
+      {/* 11. LINE ITEM CUSTOMIZER MODAL */}
+      {customizingItem && (
+        <LineItemCustomizerModal
+          isOpen={!!customizingItem}
+          onClose={() => setCustomizingItem(null)}
+          item={{
+            productId: customizingItem.productId,
+            productName: customizingItem.productName,
+            unitPrice: customizingItem.unitPrice,
+            quantity: customizingItem.quantity,
+            itemNote: customizingItem.note,
+            itemDiscountPercent: customizingItem.itemDiscountPercent,
+            itemDiscountFixed: customizingItem.itemDiscountFixed,
+          }}
+          currencySymbol={store?.currency_symbol || 'S/'}
+          onSave={(updates) => {
+            handleUpdateLineItem(updates);
+          }}
+        />
+      )}
+
+      {/* 12. DIGITAL QR MODAL (YAPE / PLIN) */}
+      <DigitalQrModal
+        isOpen={showDigitalQrModal}
+        onClose={() => setShowDigitalQrModal(false)}
+        totalCents={grandTotalCents}
+        currencySymbol={store?.currency_symbol || 'S/'}
+        walletType={digitalQrWallet}
+        onConfirmPayment={(ref) => {
+          setReferenceNumber(ref);
+          setShowDigitalQrModal(false);
+        }}
+      />
+
+      {/* 13. PRE-PRINT RECEIPT PREVIEW MODAL */}
+      <PrePrintReceiptModal
+        isOpen={showPrePrintModal}
+        onClose={() => setShowPrePrintModal(false)}
+        order={{
+          receiptNumber: 'PRE-TICKET',
+          cashierName: currentUser?.name || 'Cajero',
+          customerName: selectedCustomer?.name,
+          diningOptionName: diningOptions.find(d => d.id === selectedDiningOption)?.name,
+          items: cart.map(it => ({
+            productName: it.productName,
+            variationName: it.variationName,
+            quantity: it.quantity,
+            unitPrice: it.unitPrice,
+            discountAmount: it.discountAmount,
+            modifiers: it.selectedModifiers,
+          })),
+          subtotal: subtotalCents,
+          discountTotal: discountCents,
+          taxTotal: taxCents,
+          total: grandTotalCents,
+          paymentMethod,
+          cashTendered: paymentMethod === 'CASH' ? Math.round(parseFloat(cashTendered || '0') * 100) : null,
+          changeDue: paymentMethod === 'CASH' ? Math.max(0, Math.round(parseFloat(cashTendered || '0') * 100) - grandTotalCents) : null,
+        }}
+        store={store || {}}
+        currencySymbol={store?.currency_symbol || 'S/'}
+      />
+
+      {/* 14. OWNER PIN AUTHORIZATION MODAL */}
+      <OwnerAuthModal
+        isOpen={showOwnerAuthModal}
+        onClose={() => {
+          setShowOwnerAuthModal(false);
+          setOwnerAuthAction(null);
+        }}
+        onAuthorized={() => {
+          if (ownerAuthAction) ownerAuthAction();
+        }}
+      />
     </div>
   );
 }
+
