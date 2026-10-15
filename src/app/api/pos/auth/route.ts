@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db.ts';
-import { authService } from '@/lib/auth-service.ts';
+import { getDb } from '@/lib/db';
+import { authService } from '@/lib/auth-service';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {

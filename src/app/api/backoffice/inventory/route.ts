@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db.ts';
-import { posService } from '@/lib/pos-service.ts';
-import { authService } from '@/lib/auth-service.ts';
+import { getDb } from '@/lib/db';
+import { posService } from '@/lib/pos-service';
+import { authService } from '@/lib/auth-service';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {

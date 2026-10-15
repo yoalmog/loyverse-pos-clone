@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { syncService } from '@/lib/sync-service.ts';
+import { syncService } from '@/lib/sync-service';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {

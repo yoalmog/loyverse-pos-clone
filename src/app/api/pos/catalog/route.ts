@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { posService } from '@/lib/pos-service.ts';
+import { posService } from '@/lib/pos-service';
 
 export const dynamic = 'force-dynamic';
 

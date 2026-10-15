@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { isPostgresConfigured, checkPgHealth } from '@/lib/pg-db.ts';
-import { getDb } from '@/lib/db.ts';
+import { isPostgresConfigured, checkPgHealth } from '@/lib/pg-db';
+import { getDb } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
