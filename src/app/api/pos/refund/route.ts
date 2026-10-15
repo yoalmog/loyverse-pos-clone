@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { posService } from '@/lib/pos-service';
 import { authService } from '@/lib/auth-service';
 import { getDb } from '@/lib/db';
+import { isPostgresConfigured, queryPgOne } from '@/lib/pg-db';
+import { posPgService, authPgService } from '@/lib/pg-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +13,49 @@ export async function POST(request: Request) {
     const { orderId, userId, reason, supervisorPin } = body;
     if (!orderId || !userId) {
       return NextResponse.json({ success: false, error: 'Faltan parámetros requeridos' }, { status: 400 });
+    }
+
+    if (isPostgresConfigured()) {
+      const authHeader = request.headers.get('authorization') || request.headers.get('x-pos-session');
+      if (authHeader) {
+        const auth = await authPgService.verifyRequest(request, ['ADMIN', 'MANAGER']);
+        if (!auth.authorized) {
+          return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+        }
+        if (auth.user && auth.user.id !== userId && auth.user.role !== 'ADMIN') {
+          return NextResponse.json({ success: false, error: 'Impersonación de usuario no autorizada' }, { status: 403 });
+        }
+      } else {
+        const user = await queryPgOne('SELECT id, role, active FROM users WHERE id = $1', [userId]);
+        if (!user || user.active !== 1) {
+          return NextResponse.json({ success: false, error: 'Usuario no válido o inactivo' }, { status: 401 });
+        }
+        if (user.role === 'CASHIER') {
+          if (!supervisorPin) {
+            return NextResponse.json(
+              { success: false, error: 'Permiso denegado: Los cajeros requieren PIN de supervisor para reembolsos' },
+              { status: 403 }
+            );
+          }
+          const supervisor = await queryPgOne(
+            "SELECT id, role FROM users WHERE pin = $1 AND role IN ('ADMIN', 'MANAGER') AND active = 1",
+            [supervisorPin]
+          );
+          if (!supervisor) {
+            return NextResponse.json({ success: false, error: 'PIN de supervisor inválido' }, { status: 403 });
+          }
+        }
+      }
+
+      const refunded = await posPgService.refundOrder(orderId, userId, reason);
+      return NextResponse.json({ success: true, data: refunded });
+    }
+
+    if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_SQLITE_IN_PRODUCTION) {
+      return NextResponse.json(
+        { success: false, error: 'DATABASE_URL is not configured. PostgreSQL connection is required in production.' },
+        { status: 503 }
+      );
     }
 
     const authHeader = request.headers.get('authorization') || request.headers.get('x-pos-session');
