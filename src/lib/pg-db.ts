@@ -31,7 +31,7 @@ CMTyZKG3XEu5Ghl1LEnI3QmEKsqaCLv12BnVjbkSeZsMnevJPs1Ye6TjjJwdik5P
 o/bKiIz+Fq8=
 -----END CERTIFICATE-----`;
 
-function getTrustedCaCert(): string {
+export function getTrustedCaCert(): string {
   const customCertPath = process.env.PG_SSL_CA_PATH || path.join(process.cwd(), 'certs', 'supabase-prod-ca-2021.crt');
   if (fs.existsSync(customCertPath)) {
     try {
@@ -44,7 +44,7 @@ function getTrustedCaCert(): string {
 }
 
 function loadEnvFallback() {
-  if (process.env.DATABASE_URL) return;
+  if (process.env.DATABASE_URL || process.env.TEST_DATABASE_URL) return;
   for (const envFile of ['.env.local', '.env']) {
     if (fs.existsSync(envFile)) {
       const lines = fs.readFileSync(envFile, 'utf-8').split('\n');
@@ -70,7 +70,7 @@ function loadEnvFallback() {
 
 export function isPostgresConfigured(): boolean {
   loadEnvFallback();
-  const url = process.env.DATABASE_URL;
+  const url = (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || '').trim();
   return Boolean(url && (url.startsWith('postgres://') || url.startsWith('postgresql://')));
 }
 
@@ -78,13 +78,20 @@ export function getPgPool(): pg.Pool {
   if (poolInstance) return poolInstance;
 
   loadEnvFallback();
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || '').trim();
   if (!databaseUrl) {
     throw new Error('DATABASE_URL is not configured for PostgreSQL connection.');
   }
 
   // Strip query-string sslmode to let pg.Pool ssl options manage strict validation cleanly
-  const sanitizedUrl = databaseUrl.replace(/[?&]sslmode=[^&]+/, '');
+  let sanitizedUrl = databaseUrl;
+  try {
+    const parsed = new URL(databaseUrl);
+    parsed.searchParams.delete('sslmode');
+    sanitizedUrl = parsed.toString();
+  } catch {
+    sanitizedUrl = databaseUrl.replace(/[?&]sslmode(=[^&]*)?(&|$)/, '$2').replace(/\?$/, '');
+  }
   const caCert = getTrustedCaCert();
 
   poolInstance = new Pool({

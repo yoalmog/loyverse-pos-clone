@@ -31,26 +31,92 @@ function loadEnv() {
 }
 loadEnv();
 
+const SUPABASE_ROOT_CA = `-----BEGIN CERTIFICATE-----
+MIIDxDCCAqygAwIBAgIUbLxMod62P2ktCiAkxnKJwtE9VPYwDQYJKoZIhvcNAQEL
+BQAwazELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5l
+dyBDYXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJh
+c2UgUm9vdCAyMDIxIENBMB4XDTIxMDQyODEwNTY1M1oXDTMxMDQyNjEwNTY1M1ow
+azELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5ldyBD
+YXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJhc2Ug
+Um9vdCAyMDIxIENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqQXW
+QyHOB+qR2GJobCq/CBmQ40G0oDmCC3mzVnn8sv4XNeWtE5XcEL0uVih7Jo4Dkx1Q
+DmGHBH1zDfgs2qXiLb6xpw/CKQPypZW1JssOTMIfQppNQ87K75Ya0p25Y3ePS2t2
+GtvHxNjUV6kjOZjEn2yWEcBdpOVCUYBVFBNMB4YBHkNRDa/+S4uywAoaTWnCJLUi
+cvTlHmMw6xSQQn1UfRQHk50DMCEJ7Cy1RxrZJrkXXRP3LqQL2ijJ6F4yMfh+Gyb4
+O4XajoVj/+R4GwywKYrrS8PrSNtwxr5StlQO8zIQUSMiq26wM8mgELFlS/32Uclt
+NaQ1xBRizkzpZct9DwIDAQABo2AwXjALBgNVHQ8EBAMCAQYwHQYDVR0OBBYEFKjX
+uXY32CztkhImng4yJNUtaUYsMB8GA1UdIwQYMBaAFKjXuXY32CztkhImng4yJNUt
+aUYsMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAB8spzNn+4VU
+tVxbdMaX+39Z50sc7uATmus16jmmHjhIHz+l/9GlJ5KqAMOx26mPZgfzG7oneL2b
+VW+WgYUkTT3XEPFWnTp2RJwQao8/tYPXWEJDc0WVQHrpmnWOFKU/d3MqBgBm5y+6
+jB81TU/RG2rVerPDWP+1MMcNNy0491CTL5XQZ7JfDJJ9CCmXSdtTl4uUQnSuv/Qx
+Cea13BX2ZgJc7Au30vihLhub52De4P/4gonKsNHYdbWjg7OWKwNv/zitGDVDB9Y2
+CMTyZKG3XEu5Ghl1LEnI3QmEKsqaCLv12BnVjbkSeZsMnevJPs1Ye6TjjJwdik5P
+o/bKiIz+Fq8=
+-----END CERTIFICATE-----`;
+
+function getTrustedCaCert() {
+  const customCertPath = process.env.PG_SSL_CA_PATH || path.join(process.cwd(), 'certs', 'supabase-prod-ca-2021.crt');
+  if (fs.existsSync(customCertPath)) {
+    try {
+      return fs.readFileSync(customCertPath, 'utf8');
+    } catch {
+      // Fallback to embedded certificate
+    }
+  }
+  return SUPABASE_ROOT_CA;
+}
+
 test('SUPABASE POSTGRESQL ACCEPTANCE & CONSISTENCY SUITE', async (t) => {
-  const dbUrl = process.env.DATABASE_URL;
-  assert.ok(dbUrl, 'DATABASE_URL must be defined in .env.local');
+  const rawDbUrl = (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || '').trim();
+  if (!rawDbUrl) {
+    throw new Error(
+      'Missing required environment variable: TEST_DATABASE_URL or DATABASE_URL. ' +
+      'Please configure DATABASE_URL or TEST_DATABASE_URL in .env.local to run the PostgreSQL acceptance suite.'
+    );
+  }
 
-  const caCert = fs.existsSync('certs/supabase-prod-ca-2021.crt')
-    ? fs.readFileSync('certs/supabase-prod-ca-2021.crt', 'utf8')
-    : undefined;
+  if (!rawDbUrl.startsWith('postgres://') && !rawDbUrl.startsWith('postgresql://')) {
+    throw new Error(
+      'Invalid connection URI: TEST_DATABASE_URL / DATABASE_URL must start with "postgresql://" or "postgres://".'
+    );
+  }
 
-  const sanitizedUrl = dbUrl.replace(/[?&]sslmode=[^&]+/, '');
+  let sanitizedUrl = rawDbUrl;
+  try {
+    const parsed = new URL(rawDbUrl);
+    parsed.searchParams.delete('sslmode');
+    sanitizedUrl = parsed.toString();
+  } catch {
+    sanitizedUrl = rawDbUrl.replace(/[?&]sslmode(=[^&]*)?(&|$)/, '$2').replace(/\?$/, '');
+  }
+
   const pool = new Pool({
     connectionString: sanitizedUrl,
     ssl: {
       rejectUnauthorized: true,
-      ca: caCert,
+      ca: getTrustedCaCert(),
     },
     max: 3,
     connectionTimeoutMillis: 15000,
   });
 
-  const client = await pool.connect();
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (err) {
+    await pool.end().catch(() => {});
+    if (err.code === '28P01') {
+      throw new Error(
+        'PostgreSQL Authentication Failed (Error code: 28P01): Password authentication failed for the specified user. ' +
+        'The database password provided in .env.local (DATABASE_URL / TEST_DATABASE_URL) is rejected by the PostgreSQL server. ' +
+        'Please verify that the password matches the current database password in your Supabase project dashboard (Project Settings > Database). ' +
+        'Ensure the credentials are up to date and never commit them to source control.'
+      );
+    }
+    const safeMsg = err.message ? err.message.replace(/:[^@:]+@/, ':***@') : 'Failed to connect to PostgreSQL';
+    throw new Error(`PostgreSQL Connection Failed: ${safeMsg} (Code: ${err.code || 'UNKNOWN'})`);
+  }
 
   t.after(async () => {
     client.release();
