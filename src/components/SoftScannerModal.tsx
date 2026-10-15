@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Barcode, Scan, Search, Plus, Check } from 'lucide-react';
+import { X, Barcode, Scan, Search, Plus, Check, Camera } from 'lucide-react';
 import { soundFeedback } from '@/lib/accessibility';
+import { nativeBridgeService } from '@/lib/native-bridge';
 
 interface SoftScannerModalProps {
   isOpen: boolean;
@@ -79,7 +80,7 @@ export function SoftScannerModal({
             </span>
           </div>
 
-          {/* Manual Input Form */}
+          {/* Manual & Camera Input Form */}
           <form onSubmit={handleManualSubmit} className="flex gap-2">
             <input
               type="text"
@@ -95,6 +96,18 @@ export function SoftScannerModal({
             >
               <Search className="h-4 w-4" />
               Escanear
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const code = await nativeBridgeService.scanBarcodeWithCamera();
+                if (code) handleScanCode(code);
+              }}
+              title="Escanear con Cámara (Android WebView Bridge)"
+              className="flex items-center gap-1 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white hover:bg-indigo-500 active:scale-95"
+            >
+              <Camera className="h-4 w-4" />
+              <span className="hidden sm:inline">Cámara</span>
             </button>
           </form>
 
