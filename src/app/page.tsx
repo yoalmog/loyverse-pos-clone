@@ -143,6 +143,29 @@ export default function POSPage() {
         return;
       }
 
+      // Handle keyboard input inside Cashier PIN modal
+      if (showPinModal) {
+        if (/^[0-9]$/.test(e.key)) {
+          if (enteredPin.length < 4) {
+            const next = enteredPin + e.key;
+            setEnteredPin(next);
+            if (next.length === 4) {
+              handlePinSubmit(next);
+            }
+          }
+          return;
+        }
+        if (e.key === 'Backspace') {
+          setEnteredPin(prev => prev.slice(0, -1));
+          return;
+        }
+        if (e.key === 'Escape') {
+          setShowPinModal(false);
+          setEnteredPin('');
+          return;
+        }
+      }
+
       const currentTime = Date.now();
       const diff = currentTime - lastKeyTime.current;
       lastKeyTime.current = currentTime;
@@ -163,7 +186,7 @@ export default function POSPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [products]);
+  }, [products, showPinModal, enteredPin]);
 
   const handleBarcodeScanned = (code: string) => {
     const matched = products.find(p => p.barcode === code || p.sku === code);
@@ -445,12 +468,14 @@ export default function POSPage() {
   };
 
   // Cashier PIN switch with server-side validation
-  const handlePinSubmit = async () => {
+  const handlePinSubmit = async (pinOverride?: string) => {
+    const pinToSubmit = pinOverride || enteredPin;
+    if (!pinToSubmit || pinToSubmit.length !== 4) return;
     try {
       const res = await fetch('/api/pos/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: enteredPin }),
+        body: JSON.stringify({ pin: pinToSubmit }),
       });
       const data = await res.json();
       if (res.ok && data.success && data.user) {
@@ -1585,7 +1610,7 @@ export default function POSPage() {
                       const next = enteredPin + num;
                       setEnteredPin(next);
                       if (next.length === 4) {
-                        setTimeout(() => handlePinSubmit(), 100);
+                        handlePinSubmit(next);
                       }
                     }
                   }}
@@ -1606,7 +1631,7 @@ export default function POSPage() {
                     const next = enteredPin + '0';
                     setEnteredPin(next);
                     if (next.length === 4) {
-                      setTimeout(() => handlePinSubmit(), 100);
+                      handlePinSubmit(next);
                     }
                   }
                 }}
