@@ -24,6 +24,8 @@ import {
   Store
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from '../../i18n/translations.ts';
+import { StorageService } from '../../services/storageService.ts';
+import { Timecard } from '../../types/pos.ts';
 
 interface HeaderProps {
   searchTerm: string;
@@ -57,6 +59,7 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
     currentStoreId,
     switchStore,
     setOpenBarcodeScannerModal,
+    showToast,
     t
   } = usePOS();
 
@@ -65,6 +68,32 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
   const [showLanguageMenu, setShowLanguageMenu] = useState<boolean>(false);
   const [showStoreMenu, setShowStoreMenu] = useState<boolean>(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
+  const [activeTimecard, setActiveTimecard] = useState<Timecard | undefined>(undefined);
+
+  // Sync active timecard for current employee
+  useEffect(() => {
+    setActiveTimecard(StorageService.getActiveTimecard(currentEmployee.id));
+  }, [currentEmployee.id, showEmployeeMenu]);
+
+  const handleToggleClock = () => {
+    if (activeTimecard) {
+      const outCard = StorageService.clockOut(currentEmployee.id);
+      setActiveTimecard(undefined);
+      showToast({
+        type: 'info',
+        title: 'Clocked Out',
+        message: `${currentEmployee.name} clocked out. Shift: ${Math.floor((outCard?.totalMinutes || 0) / 60)}h ${(outCard?.totalMinutes || 0) % 60}m`
+      });
+    } else {
+      const inCard = StorageService.clockIn(currentEmployee.id, currentEmployee.name);
+      setActiveTimecard(inCard);
+      showToast({
+        type: 'success',
+        title: 'Clocked In',
+        message: `${currentEmployee.name} clocked in at ${new Date(inCard.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      });
+    }
+  };
 
   // Close mobile search when route changes
   useEffect(() => {
@@ -521,6 +550,34 @@ export const Header: React.FC<HeaderProps> = ({ searchTerm, setSearchTerm, onBar
                 {/* Dropdown for Switching Staff */}
                 {showEmployeeMenu && (
                   <div className="absolute right-0 mt-2 w-60 theme-surface rounded-xl shadow-xl border border-[var(--theme-border)] py-2 z-50 animate-fadeIn">
+                    <div className="px-3.5 py-2 border-b border-[var(--theme-border)] bg-[var(--theme-surface-variant)]/50">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-[var(--theme-text-secondary)]">Time Tracking</span>
+                        {activeTimecard ? (
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            Clocked In
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                            Clocked Out
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleToggleClock}
+                        className={`w-full mt-2 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                          activeTimecard
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                        }`}
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>{activeTimecard ? 'Clock Out of Shift' : 'Clock In to Shift'}</span>
+                      </button>
+                    </div>
+
                     <div className="px-3.5 py-1.5 border-b border-[var(--theme-divider)]">
                       <p className="text-[11px] font-semibold uppercase text-[var(--theme-text-secondary)]">{t('header.switchCashier', 'Switch Cashier')}</p>
                     </div>

@@ -273,16 +273,23 @@ export class InventoryService {
   }
 
   /**
-   * Create physical stock count session
+   * Create physical stock count session (Full or Partial by Category)
    */
   static createStockCountSession(
     storeId: string,
     conductedBy: string,
     title: string = 'Full Physical Stock Count',
+    type: 'full' | 'partial' = 'full',
+    categoryId?: string,
+    categoryName?: string,
     initialItems?: StockCountItem[]
   ): StockCountSession {
     const allProducts = StorageService.getProducts();
-    const tracked = allProducts.filter(p => p.trackInventory);
+    let tracked = allProducts.filter(p => p.trackInventory);
+
+    if (type === 'partial' && categoryId) {
+      tracked = tracked.filter(p => p.categoryId === categoryId);
+    }
 
     const items: StockCountItem[] =
       initialItems ||
@@ -301,6 +308,9 @@ export class InventoryService {
       id: `sc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       storeId,
       title,
+      type,
+      categoryId,
+      categoryName,
       status: 'draft',
       items,
       totalVarianceUnits: 0,
@@ -407,12 +417,31 @@ export class InventoryService {
   }
 
   /**
-   * Create Purchase Order
+   * Create Purchase Order with proportional Landed Cost distribution
    */
   static createPurchaseOrder(
     poData: Omit<PurchaseOrder, 'id' | 'createdAt' | 'updatedAt'>
   ): PurchaseOrder {
-    const totalAmount = poData.items.reduce((acc, i) => acc + i.totalCost, 0);
+    const itemsTotalCost = poData.items.reduce((acc, i) => acc + i.totalCost, 0);
+    const additionalCostsTotal = (poData.additionalCosts || []).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+
+    // Distribute additional costs proportionally across items
+    const items = poData.items.map(item => {
+      let share = 0;
+      if (additionalCostsTotal > 0 && itemsTotalCost > 0) {
+        share = Math.round((item.totalCost / itemsTotalCost) * additionalCostsTotal * 100) / 100;
+      }
+      const landedUnitCost = item.quantityOrdered > 0
+        ? Math.round((item.unitCost + (share / item.quantityOrdered)) * 100) / 100
+        : item.unitCost;
+      return {
+        ...item,
+        additionalCostShare: share,
+        landedUnitCost
+      };
+    });
+
+    const totalAmount = itemsTotalCost + additionalCostsTotal;
     const nowIso = new Date().toISOString();
 
     const newPO: PurchaseOrder = {
@@ -420,6 +449,9 @@ export class InventoryService {
       createdAt: nowIso,
       updatedAt: nowIso,
       ...poData,
+      items,
+      additionalCosts: poData.additionalCosts || [],
+      additionalCostsTotal,
       totalAmount
     };
 
@@ -463,13 +495,19 @@ export class InventoryService {
         const newQty = prevQty + item.quantityOrdered;
 
         item.quantityReceived = item.quantityOrdered;
+        const effectiveCost = (item.landedUnitCost && item.landedUnitCost > 0) ? item.landedUnitCost : item.unitCost;
 
         allProducts[pIndex] = {
           ...prod,
           stock: newQty,
-          cost: item.unitCost, // Update latest purchasing cost
+          cost: effectiveCost, // Update latest purchasing/landed cost
           updatedAt: nowIso
         };
+
+        const hasLanded = Boolean(po.additionalCostsTotal && po.additionalCostsTotal > 0);
+        const reasonStr = hasLanded
+          ? `PO Received: ${po.poNumber} (${po.supplierName}) [Landed Cost: $${effectiveCost.toFixed(2)}/unit]`
+          : `PO Received: ${po.poNumber} (${po.supplierName})`;
 
         const movement: InventoryMovement = {
           id: `mov_po_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -481,7 +519,7 @@ export class InventoryService {
           quantity: item.quantityOrdered,
           previousQuantity: prevQty,
           newQuantity: newQty,
-          reason: `PO Received: ${po.poNumber} (${po.supplierName})`,
+          reason: reasonStr,
           referenceId: po.id,
           employeeId: 'staff_receiver',
           employeeName: receivedBy,

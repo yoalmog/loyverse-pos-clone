@@ -20,6 +20,7 @@ import { DiscountsView } from '@/components/discounts/DiscountsView.tsx';
 import { SettingsView } from '@/components/settings/SettingsView.tsx';
 import { MenuScannerView } from '@/components/menu-scanner/MenuScannerView.tsx';
 import { BackOfficeView } from '@/components/backoffice/BackOfficeView.tsx';
+import { KitchenDisplayView } from '@/components/kds/KitchenDisplayView.tsx';
 import { AccessibilityLiveAnnouncer } from '@/components/common/AccessibilityLiveAnnouncer.tsx';
 
 const POSAppContent: React.FC = () => {
@@ -78,6 +79,7 @@ const POSAppContent: React.FC = () => {
           {activeRoute === 'discounts' && <DiscountsView />}
           {activeRoute === 'settings' && <SettingsView />}
           {activeRoute === 'backoffice' && <BackOfficeView />}
+          {activeRoute === 'kds' && <KitchenDisplayView />}
         </main>
       </div>
 

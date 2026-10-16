@@ -12,7 +12,8 @@ import {
   StoreSettings,
   InventoryMovement,
   HeldOrder,
-  OfflineSaleQueueItem
+  OfflineSaleQueueItem,
+  Timecard
 } from '../types/pos.ts';
 import { Printer, PrinterRoute, PrintJob } from '../types/printer.ts';
 import { Supplier, PurchaseOrder, StockCountSession } from '../types/inventoryOperations.ts';
@@ -67,7 +68,8 @@ const STORAGE_KEYS = {
   PROMOTIONS: 'aurapos_promotions_v2',
   WEBHOOK_SUBSCRIPTIONS: 'aurapos_webhook_subs_v2',
   WEBHOOK_LOGS: 'aurapos_webhook_logs_v2',
-  EMPLOYEE_AUDIT_LOGS: 'aurapos_employee_audit_logs_v2'
+  EMPLOYEE_AUDIT_LOGS: 'aurapos_employee_audit_logs_v2',
+  TIMECARDS: 'aurapos_timecards_v2'
 };
 
 export interface PaymentAuditLog {
@@ -197,6 +199,61 @@ export class StorageService {
   }
   static setCurrentEmployee(employeeId: string): void {
     setStorageItem(STORAGE_KEYS.CURRENT_USER_ID, employeeId);
+  }
+
+  // Employee Timecards (Loyverse Manual Chapter 5.4–5.6, p. 140–147)
+  static getTimecards(): Timecard[] {
+    return getStorageItem<Timecard[]>(STORAGE_KEYS.TIMECARDS, []);
+  }
+
+  static saveTimecards(timecards: Timecard[]): void {
+    setStorageItem(STORAGE_KEYS.TIMECARDS, timecards);
+  }
+
+  static getActiveTimecard(employeeId: string): Timecard | undefined {
+    const cards = this.getTimecards();
+    return cards.find(c => c.employeeId === employeeId && !c.clockOut);
+  }
+
+  static clockIn(employeeId: string, employeeName: string, notes?: string): Timecard {
+    const cards = this.getTimecards();
+    const existingActive = cards.find(c => c.employeeId === employeeId && !c.clockOut);
+    if (existingActive) {
+      return existingActive;
+    }
+    const nowIso = new Date().toISOString();
+    const newCard: Timecard = {
+      id: `tc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      storeId: 'store_aura_main',
+      employeeId,
+      employeeName,
+      clockIn: nowIso,
+      clockOut: null,
+      notes,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    cards.unshift(newCard);
+    this.saveTimecards(cards);
+    return newCard;
+  }
+
+  static clockOut(employeeId: string, notes?: string): Timecard | null {
+    const cards = this.getTimecards();
+    const active = cards.find(c => c.employeeId === employeeId && !c.clockOut);
+    if (!active) return null;
+
+    const nowIso = new Date().toISOString();
+    const diffMs = new Date(nowIso).getTime() - new Date(active.clockIn).getTime();
+    const totalMinutes = Math.max(0, Math.round(diffMs / 60000));
+
+    active.clockOut = nowIso;
+    active.totalMinutes = totalMinutes;
+    active.updatedAt = nowIso;
+    if (notes) active.notes = active.notes ? `${active.notes} | ${notes}` : notes;
+
+    this.saveTimecards(cards);
+    return active;
   }
 
   // Categories

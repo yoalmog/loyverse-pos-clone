@@ -217,11 +217,11 @@ export default function App() {
   };
 
   // 4. Cart Add / Stepper
-  const addToCart = (product: Product) => {
+  const addToCart = (product: Product, quantity: number = 1) => {
     setCart(prev => {
       const found = prev.find(item => item.productId === product.id);
       if (found) {
-        return prev.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => item.productId === product.id ? { ...item, quantity: item.quantity + quantity } : item);
       }
       return [
         ...prev,
@@ -230,7 +230,7 @@ export default function App() {
           productId: product.id,
           name: product.name,
           price: product.price,
-          quantity: 1,
+          quantity,
           selectedModifiers: [],
         }
       ];
@@ -247,13 +247,33 @@ export default function App() {
     }).filter(Boolean) as CartItem[]);
   };
 
-  // 5. Barcode Scanner Keyboard Handler
+  // 5. Barcode Scanner Keyboard Handler (with EAN-13 Embedded Weight Barcode Support - Loyverse Manual 2.5)
   const handleBarcodeSubmit = () => {
     if (!barcodeInput.trim()) return;
     const code = barcodeInput.trim();
+
+    // Embedded-weight barcode check (EAN-13: 20/21/02 + 5-digit PLU/SKU + 5-digit weight in grams + checksum)
+    const embeddedMatch = code.match(/^(20|21|02)(\d{5})(\d{5})\d$/);
+    if (embeddedMatch) {
+      const plu = embeddedMatch[2];
+      const weightKg = parseInt(embeddedMatch[3], 10) / 1000;
+      const foundWeighted = products.find(p =>
+        (p.sku && p.sku.trim() === plu) ||
+        (p.barcode && p.barcode.trim() === plu) ||
+        (p.sku && p.sku.trim() === `${embeddedMatch[1]}${plu}`) ||
+        (p.barcode && p.barcode.includes(plu))
+      );
+      if (foundWeighted) {
+        addToCart(foundWeighted, weightKg > 0 ? weightKg : 1);
+        setBarcodeInput('');
+        Alert.alert('Balanza', `${foundWeighted.name}: ${weightKg.toFixed(3)} kg agregados a la orden.`);
+        return;
+      }
+    }
+
     const found = products.find(p => p.barcode === code || p.sku === code);
     if (found) {
-      addToCart(found);
+      addToCart(found, 1);
       setBarcodeInput('');
     } else {
       Alert.alert('No encontrado', `No se encontró producto con código: ${code}`);

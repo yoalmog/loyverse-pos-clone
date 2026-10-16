@@ -56,7 +56,8 @@ export type AppRoute =
   | 'reports'
   | 'discounts'
   | 'settings'
-  | 'backoffice';
+  | 'backoffice'
+  | 'kds';
 
 export interface ToastMessage {
   id: string;

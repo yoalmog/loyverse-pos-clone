@@ -72,15 +72,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           setSearchStatus('found');
 
           if (autoAddOnScan) {
+            const qty = result.embeddedWeightKg && result.embeddedWeightKg > 0 ? result.embeddedWeightKg : 1;
             if (result.matchedVariant) {
-              addToCart(result.product, result.matchedVariant, 1);
+              addToCart(result.product, result.matchedVariant, qty);
             } else if (!result.product.variants || result.product.variants.length === 0) {
-              addToCart(result.product, undefined, 1);
+              addToCart(result.product, undefined, qty);
             }
             showToast({
               type: 'success',
               title: t('barcode.scannedTitle', 'Barcode Scanned'),
-              message: `${result.product.name} ${result.matchedVariant ? `(${result.matchedVariant.name})` : ''} added to cart.`
+              message: `${result.product.name} ${result.matchedVariant ? `(${result.matchedVariant.name})` : ''} ${result.embeddedWeightKg ? `[${qty} kg]` : ''} added to cart.`
             });
           }
 

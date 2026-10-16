@@ -48,12 +48,14 @@ export const POSScreen: React.FC<POSScreenProps> = ({ searchTerm }) => {
         if (result) {
           AudioFeedbackService.playBarcodeSuccess();
 
+          const qty = result.embeddedWeightKg && result.embeddedWeightKg > 0 ? result.embeddedWeightKg : 1;
+
           if (result.matchedVariant) {
-            addToCart(result.product, result.matchedVariant, 1);
+            addToCart(result.product, result.matchedVariant, qty);
             showToast({
               type: 'success',
               title: t('barcode.scannedTitle', 'Barcode Scanned'),
-              message: `${result.product.name} (${result.matchedVariant.name}) added to cart.`
+              message: `${result.product.name} (${result.matchedVariant.name}) [${qty} kg] added to cart.`
             });
           } else if (result.product.variants && result.product.variants.length > 0) {
             setActiveVariantProduct(result.product);
@@ -63,11 +65,11 @@ export const POSScreen: React.FC<POSScreenProps> = ({ searchTerm }) => {
               message: `Select option for ${result.product.name}.`
             });
           } else {
-            addToCart(result.product, undefined, 1);
+            addToCart(result.product, undefined, qty);
             showToast({
               type: 'success',
               title: t('barcode.scannedTitle', 'Barcode Scanned'),
-              message: `${result.product.name} added to cart.`
+              message: `${result.product.name} ${result.embeddedWeightKg ? `(${qty} kg)` : ''} added to cart.`
             });
           }
         } else {

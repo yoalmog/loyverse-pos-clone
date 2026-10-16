@@ -22,7 +22,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
-  Building2
+  Building2,
+  UtensilsCrossed
 } from 'lucide-react';
 
 interface NavItem {
@@ -35,6 +36,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'pos', labelKey: 'nav.pos', defaultLabel: 'Point of Sale', icon: CreditCard },
+  { id: 'kds', labelKey: 'nav.kds', defaultLabel: 'Kitchen Display (KDS)', icon: UtensilsCrossed, badge: 'LIVE' },
   { id: 'sales', labelKey: 'nav.sales', defaultLabel: 'Sales History', icon: Receipt },
   { id: 'products', labelKey: 'nav.products', defaultLabel: 'Products', icon: Package },
   { id: 'categories', labelKey: 'nav.categories', defaultLabel: 'Categories', icon: FolderTree },

@@ -7,7 +7,8 @@ import { SyncRepository } from './SyncRepository.ts';
 export interface BarcodeLookupResult {
   product: Product;
   matchedVariant?: ProductVariant;
-  matchType: 'product_barcode' | 'product_sku' | 'variant_barcode' | 'variant_sku';
+  matchType: 'product_barcode' | 'product_sku' | 'variant_barcode' | 'variant_sku' | 'embedded_weight_barcode';
+  embeddedWeightKg?: number;
 }
 
 /**
@@ -113,6 +114,31 @@ export class ProductRepository {
     }
 
     const all = await this.getAll(storeId);
+
+    // 1. Check embedded-weight barcodes (Loyverse Manual Chapter 2.5: EAN-13 starting with 20, 21, 02)
+    const embeddedMatch = code.match(/^(20|21|02)(\d{5})(\d{5})\d$/);
+    if (embeddedMatch) {
+      const plu = embeddedMatch[2];
+      const weightGrams = parseInt(embeddedMatch[3], 10);
+      const weightKg = Math.round((weightGrams / 1000) * 1000) / 1000;
+
+      for (const p of all) {
+        if (
+          (p.sku && p.sku.trim() === plu) ||
+          (p.barcode && p.barcode.trim() === plu) ||
+          (p.sku && p.sku.trim() === `${embeddedMatch[1]}${plu}`) ||
+          (p.barcode && p.barcode.includes(plu))
+        ) {
+          return {
+            product: p,
+            matchType: 'embedded_weight_barcode',
+            embeddedWeightKg: weightKg > 0 ? weightKg : 1
+          };
+        }
+      }
+    }
+
+    // 2. Standard exact barcode / SKU matching
     for (const p of all) {
       if (p.barcode && p.barcode.trim() === code) {
         return { product: p, matchType: 'product_barcode' };

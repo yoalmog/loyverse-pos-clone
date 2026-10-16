@@ -24,6 +24,12 @@ export interface Supplier {
 
 export type PurchaseOrderStatus = 'draft' | 'ordered' | 'received' | 'cancelled';
 
+export interface AdditionalCost {
+  id: string;
+  name: string; // e.g. "Shipping", "Customs", "Packaging"
+  amount: number;
+}
+
 export interface PurchaseOrderItem {
   id: string;
   productId: string;
@@ -33,6 +39,8 @@ export interface PurchaseOrderItem {
   quantityReceived: number;
   unitCost: number;
   totalCost: number;
+  additionalCostShare?: number; // Allocated portion of landed cost
+  landedUnitCost?: number; // unitCost + (additionalCostShare / quantityOrdered)
 }
 
 export interface PurchaseOrder {
@@ -43,6 +51,8 @@ export interface PurchaseOrder {
   supplierName: string;
   status: PurchaseOrderStatus;
   items: PurchaseOrderItem[];
+  additionalCosts?: AdditionalCost[];
+  additionalCostsTotal?: number;
   totalAmount: number;
   notes?: string;
   orderDate: string;
@@ -69,6 +79,9 @@ export interface StockCountSession {
   id: string;
   storeId: string;
   title: string;
+  type?: 'full' | 'partial';
+  categoryId?: string;
+  categoryName?: string;
   status: 'draft' | 'completed' | 'cancelled';
   items: StockCountItem[];
   totalVarianceUnits: number;

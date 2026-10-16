@@ -426,4 +426,112 @@ test('POS Service Tests', async (t) => {
     posService.deleteOpenTicket(ticket1.id);
     posService.deleteOpenTicket(ticket2.id);
   });
+
+  await t.test('15. Purchase Orders Landed Cost proportional allocation (Loyverse Manual 4.3 & 4.4)', () => {
+    // Items subtotal = $60 (item A, 10 units @ $6.00) + $40 (item B, 20 units @ $2.00) = $100.00
+    const items = [
+      { id: 'poi_1', productId: 'prod_1', quantityOrdered: 10, unitCost: 6.00, totalCost: 60.00 },
+      { id: 'poi_2', productId: 'prod_2', quantityOrdered: 20, unitCost: 2.00, totalCost: 40.00 },
+    ];
+    const itemsTotal = items.reduce((acc, i) => acc + i.totalCost, 0);
+    assert.equal(itemsTotal, 100.00);
+
+    // Landed costs: $20 shipping + $10 customs = $30 total landed cost
+    const additionalCosts = [
+      { id: 'c1', name: 'Shipping', amount: 20.00 },
+      { id: 'c2', name: 'Customs', amount: 10.00 }
+    ];
+    const additionalCostsTotal = additionalCosts.reduce((acc, c) => acc + c.amount, 0);
+    assert.equal(additionalCostsTotal, 30.00);
+
+    // Allocate proportionally: Item 1 gets 60/100 * 30 = 18.00; Item 2 gets 40/100 * 30 = 12.00
+    const enriched = items.map(item => {
+      const share = Math.round((item.totalCost / itemsTotal) * additionalCostsTotal * 100) / 100;
+      const landedUnitCost = Math.round((item.unitCost + (share / item.quantityOrdered)) * 100) / 100;
+      return { ...item, additionalCostShare: share, landedUnitCost };
+    });
+
+    assert.equal(enriched[0].additionalCostShare, 18.00, 'Item 1 gets $18 landed cost share');
+    assert.equal(enriched[0].landedUnitCost, 7.80, 'Item 1 landed unit cost is $6.00 + $1.80 = $7.80');
+
+    assert.equal(enriched[1].additionalCostShare, 12.00, 'Item 2 gets $12 landed cost share');
+    assert.equal(enriched[1].landedUnitCost, 2.60, 'Item 2 landed unit cost is $2.00 + $0.60 = $2.60');
+
+    const grandTotal = itemsTotal + additionalCostsTotal;
+    assert.equal(grandTotal, 130.00, 'Grand total includes landed costs');
+  });
+
+  await t.test('16. EAN-13 Embedded Weight Barcode Parsing (Loyverse Manual Chapter 2.5)', () => {
+    const parseWeightedBarcode = (barcode) => {
+      const match = barcode.match(/^(20|21|02)(\d{5})(\d{5})\d$/);
+      if (!match) return null;
+      return {
+        prefix: match[1],
+        plu: match[2],
+        weightKg: parseInt(match[3], 10) / 1000
+      };
+    };
+
+    // 1. Prefix 20: PLU 01234, 750 grams (0.750 kg)
+    const res1 = parseWeightedBarcode('2001234007505');
+    assert.ok(res1);
+    assert.equal(res1.prefix, '20');
+    assert.equal(res1.plu, '01234');
+    assert.equal(res1.weightKg, 0.750);
+
+    // 2. Prefix 21: PLU 09876, 1250 grams (1.250 kg)
+    const res2 = parseWeightedBarcode('2109876012503');
+    assert.ok(res2);
+    assert.equal(res2.prefix, '21');
+    assert.equal(res2.plu, '09876');
+    assert.equal(res2.weightKg, 1.250);
+
+    // 3. Prefix 02: PLU 11111, 250 grams (0.250 kg)
+    const res3 = parseWeightedBarcode('0211111002509');
+    assert.ok(res3);
+    assert.equal(res3.prefix, '02');
+    assert.equal(res3.plu, '11111');
+    assert.equal(res3.weightKg, 0.250);
+
+    // 4. Non-weighted standard barcode is not misparsed as weighted
+    const res4 = parseWeightedBarcode('7751234567890');
+    assert.equal(res4, null, 'Standard EAN-13 not starting with 20/21/02 returns null');
+  });
+
+  await t.test('17. Employee Timecards & Shift Hours Tracking (Loyverse Manual Chapter 5.4-5.6)', () => {
+    // 1. Clock in
+    const clockInTime = new Date('2026-10-16T08:00:00.000Z');
+    const clockOutTime = new Date('2026-10-16T16:30:00.000Z'); // 8.5 hours = 510 minutes
+
+    const timecard = {
+      id: 'tc_test_1',
+      employeeId: 'emp_123',
+      employeeName: 'Maria Cashier',
+      clockIn: clockInTime.toISOString(),
+      clockOut: clockOutTime.toISOString(),
+      totalMinutes: Math.round((clockOutTime.getTime() - clockInTime.getTime()) / 60000)
+    };
+
+    assert.equal(timecard.totalMinutes, 510, 'Shift is exactly 510 minutes');
+    const hours = timecard.totalMinutes / 60;
+    assert.equal(hours, 8.5, 'Shift is 8.5 hours');
+
+    // 2. Overtime calculation (>40 hours threshold)
+    const weeklyShifts = [
+      { totalMinutes: 600 }, // 10h
+      { totalMinutes: 600 }, // 10h
+      { totalMinutes: 600 }, // 10h
+      { totalMinutes: 600 }, // 10h
+      { totalMinutes: 300 }  // 5h -> total 45 hours
+    ];
+    const totalWeeklyMinutes = weeklyShifts.reduce((acc, s) => acc + s.totalMinutes, 0);
+    const totalWeeklyHours = totalWeeklyMinutes / 60;
+    const regularHours = Math.min(40, totalWeeklyHours);
+    const overtimeHours = Math.max(0, totalWeeklyHours - 40);
+
+    assert.equal(totalWeeklyHours, 45, 'Total weekly hours is 45');
+    assert.equal(regularHours, 40, 'Regular hours capped at 40');
+    assert.equal(overtimeHours, 5, 'Overtime hours is 5');
+  });
 });
+

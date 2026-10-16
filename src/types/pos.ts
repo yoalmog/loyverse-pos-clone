@@ -25,6 +25,19 @@ export interface Employee {
   permissions: string[];
 }
 
+export interface Timecard {
+  id: string;
+  storeId: string;
+  employeeId: string;
+  employeeName: string;
+  clockIn: string; // ISO timestamp
+  clockOut?: string | null; // ISO timestamp or null if currently active
+  totalMinutes?: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CategoryTranslation {
   id: string;
   categoryId: string;
