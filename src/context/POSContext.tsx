@@ -163,6 +163,7 @@ interface POSContextType {
   holdCurrentOrder: () => boolean;
   resumeOrder: (heldOrderId: string) => void;
   deleteHeldOrder: (heldOrderId: string) => void;
+  mergeHeldOrders: (heldOrderIds: string[]) => void;
 
   // Offline / Network & Sync Engine (Phase 3)
   isOffline: boolean;
@@ -951,6 +952,16 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast({ type: 'info', title: 'Held order removed' });
   }, [showToast]);
 
+  const mergeHeldOrders = useCallback((heldOrderIds: string[]) => {
+    const merged = PosService.mergeHeldOrders(heldOrderIds);
+    if (merged) {
+      setHeldOrders(StorageService.getHeldOrders());
+      showToast({ type: 'success', title: `Merged into ${merged.orderNumber}`, message: `${heldOrderIds.length} tickets consolidated.` });
+    } else {
+      showToast({ type: 'error', title: 'Merge failed', message: 'Could not consolidate selected tickets.' });
+    }
+  }, [showToast]);
+
   const triggerSync = useCallback(async () => {
     setIsSyncing(true);
     try {
@@ -1144,6 +1155,7 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         holdCurrentOrder,
         resumeOrder,
         deleteHeldOrder,
+        mergeHeldOrders,
         isOffline,
         isSyncing,
         pendingSyncCount,

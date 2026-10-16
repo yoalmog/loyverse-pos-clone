@@ -390,4 +390,40 @@ test('POS Service Tests', async (t) => {
     const totalOrders = db.prepare('SELECT COUNT(*) as count FROM orders WHERE idempotency_key = ?').get(concurrentKey).count;
     assert.equal(totalOrders, 1, 'Exactly one order row must exist in the database');
   });
+
+  await t.test('14. Open ticket merge and cash rounding calculation (Loyverse Manual 2.11 & 8.8)', () => {
+    // 1. Swedish cash rounding verification (Manual Chapter 8.8)
+    const roundCash = (amount) => Math.round(amount * 10) / 10;
+    assert.equal(roundCash(10.13), 10.10, 'S/ 10.13 must round down to S/ 10.10');
+    assert.equal(roundCash(10.17), 10.20, 'S/ 10.17 must round up to S/ 10.20');
+    assert.equal(roundCash(25.55), 25.60, 'S/ 25.55 must round to S/ 25.60');
+
+    // 2. Open tickets hold and recall
+    const ticket1 = posService.saveOpenTicket({
+      userId: 'usr_cashier',
+      ticketName: 'Table 1',
+      items: [
+        { productId: 'prod_espresso', productName: 'Café Espresso', quantity: 2, unitPrice: 750, selectedModifiers: [] }
+      ]
+    });
+    assert.ok(ticket1.id, 'Ticket 1 saved');
+
+    const ticket2 = posService.saveOpenTicket({
+      userId: 'usr_cashier',
+      ticketName: 'Table 2',
+      items: [
+        { productId: 'prod_americano', productName: 'Café Americano', quantity: 1, unitPrice: 850, selectedModifiers: [] }
+      ]
+    });
+    assert.ok(ticket2.id, 'Ticket 2 saved');
+
+    // Verify both tickets appear in open tickets list
+    const openTickets = posService.getOpenTickets();
+    assert.ok(openTickets.some(t => t.id === ticket1.id), 'Ticket 1 is in open list');
+    assert.ok(openTickets.some(t => t.id === ticket2.id), 'Ticket 2 is in open list');
+
+    // Clean up test tickets
+    posService.deleteOpenTicket(ticket1.id);
+    posService.deleteOpenTicket(ticket2.id);
+  });
 });

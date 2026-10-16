@@ -20,7 +20,10 @@ import {
   Check,
   Eye,
   Receipt,
-  QrCode
+  QrCode,
+  ArrowLeftRight,
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 import { PaymentMethod, PaymentRecord, Sale } from '../../types/pos.ts';
 
@@ -46,6 +49,14 @@ export const CheckoutScreen: React.FC = () => {
     translateProductName
   } = usePOS();
 
+  // Tips & Cash Rounding States (Loyverse Manual Chapter 10.7, p. 384 & Chapter 8.8, p. 250)
+  const [tipPercent, setTipPercent] = useState<number>(0);
+  const [isCashRoundingEnabled, setIsCashRoundingEnabled] = useState<boolean>(true);
+
+  // Split Payment State (Loyverse Manual Chapter 2.9, p. 49)
+  const [isSplitPaymentMode, setIsSplitPaymentMode] = useState<boolean>(false);
+  const [splitPayments, setSplitPayments] = useState<PaymentRecord[]>([]);
+
   // Payment states
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>('cash');
   const [tenderedInput, setTenderedInput] = useState<string>(grandTotal.toFixed(2));
@@ -55,15 +66,43 @@ export const CheckoutScreen: React.FC = () => {
   const [isPreviewReceiptOpen, setIsPreviewReceiptOpen] = useState<boolean>(false);
   const [checkoutTxnId] = useState<string>(() => `TXN-${Date.now().toString().slice(-6)}`);
 
-  // Sync tendered amount when grandTotal changes
+  // Tip calculation
+  const tipAmount = useMemo(() => {
+    if (tipPercent <= 0) return 0;
+    return Currency.calculatePercentage(grandTotal, tipPercent);
+  }, [grandTotal, tipPercent]);
+
+  const totalPayable = useMemo(() => {
+    return Currency.toDollars(Currency.toCents(grandTotal) + Currency.toCents(tipAmount));
+  }, [grandTotal, tipAmount]);
+
+  const totalSplitPaid = useMemo(() => {
+    const sumCents = splitPayments.reduce((acc, p) => acc + Currency.toCents(p.amount), 0);
+    return Currency.toDollars(sumCents);
+  }, [splitPayments]);
+
+  const remainingBalance = useMemo(() => {
+    const remCents = Math.max(0, Currency.toCents(totalPayable) - Currency.toCents(totalSplitPaid));
+    return Currency.toDollars(remCents);
+  }, [totalPayable, totalSplitPaid]);
+
+  // Swedish cash rounding (to nearest 0.10)
+  const roundedCashTotal = useMemo(() => {
+    if (!isCashRoundingEnabled || selectedMethod !== 'cash') return remainingBalance;
+    return Math.round(remainingBalance * 10) / 10;
+  }, [remainingBalance, isCashRoundingEnabled, selectedMethod]);
+
+  const effectiveDue = selectedMethod === 'cash' ? roundedCashTotal : remainingBalance;
+
+  // Sync tendered amount when effectiveDue changes
   useEffect(() => {
-    setTenderedInput(grandTotal.toFixed(2));
-  }, [grandTotal]);
+    setTenderedInput(effectiveDue.toFixed(2));
+  }, [effectiveDue]);
 
   // Robust cash change calculation via PaymentService avoiding float errors
   const cashChange = useMemo(() => {
-    return PaymentService.calculateCashChange(tenderedInput, grandTotal);
-  }, [tenderedInput, grandTotal]);
+    return PaymentService.calculateCashChange(tenderedInput, effectiveDue);
+  }, [tenderedInput, effectiveDue]);
 
   const tenderedAmount = cashChange.tenderedDollars;
   const changeDue = cashChange.changeDueDollars;
@@ -71,8 +110,8 @@ export const CheckoutScreen: React.FC = () => {
 
   // Dynamic quick tender options
   const quickTenderAmounts = useMemo(() => {
-    return PaymentService.getQuickTenderAmounts(grandTotal);
-  }, [grandTotal]);
+    return PaymentService.getQuickTenderAmounts(effectiveDue);
+  }, [effectiveDue]);
 
   // Memoized draft sale representing current checkout state for receipt preview
   const draftReceiptSale = useMemo<Sale>(() => {
@@ -237,6 +276,43 @@ export const CheckoutScreen: React.FC = () => {
     }
   };
 
+  // Unified payment tender handler supporting single and split payments
+  const recordPaymentTender = (
+    method: PaymentMethod,
+    amount: number,
+    tendered?: number,
+    change?: number,
+    ref?: string
+  ) => {
+    const payment: PaymentRecord = {
+      id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      method,
+      amount,
+      tendered,
+      change,
+      transactionReference: ref,
+      status: 'completed',
+      createdAt: new Date().toISOString()
+    };
+
+    if (isSplitPaymentMode) {
+      const nextSplits = [...splitPayments, payment];
+      setSplitPayments(nextSplits);
+      const newTotalPaid = nextSplits.reduce((acc, p) => acc + p.amount, 0);
+      if (newTotalPaid >= totalPayable - 0.001) {
+        handleCompletePayment(nextSplits);
+      } else {
+        showToast({
+          type: 'info',
+          title: 'Partial payment added',
+          message: `${formatCurrency(amount)} recorded. Remaining: ${formatCurrency(Math.max(0, totalPayable - newTotalPaid))}`
+        });
+      }
+    } else {
+      handleCompletePayment([payment]);
+    }
+  };
+
   // Cash Checkout Handler
   const handleCompleteCash = () => {
     if (isCashInsufficient) {
@@ -244,56 +320,41 @@ export const CheckoutScreen: React.FC = () => {
       return;
     }
 
-    const cashPayment: PaymentRecord = {
-      id: `pay_${Date.now()}`,
-      method: 'cash',
-      amount: grandTotal,
-      tendered: tenderedAmount,
-      change: changeDue,
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    };
-
-    handleCompletePayment([cashPayment]);
+    const tenderAmt = Math.min(tenderedAmount, effectiveDue);
+    recordPaymentTender('cash', tenderAmt, tenderedAmount, changeDue);
   };
 
   // Card Payment Handler (Terminal / External Card Entry)
   const handleStartCardPayment = () => {
-    const cardPayment: PaymentRecord = {
-      id: `pay_${Date.now()}`,
-      method: 'card',
-      amount: grandTotal,
-      transactionReference: `CARD-${Date.now().toString().slice(-6)}`,
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    };
-    handleCompletePayment([cardPayment]);
+    recordPaymentTender(
+      'card',
+      effectiveDue,
+      undefined,
+      undefined,
+      `CARD-${Date.now().toString().slice(-6)}`
+    );
   };
 
   // Contactless Mobile Payment Handler (Apple Pay / Google Pay / NFC)
   const handleCompleteMobile = () => {
-    const mobilePayment: PaymentRecord = {
-      id: `pay_${Date.now()}`,
-      method: 'mobile',
-      amount: grandTotal,
-      transactionReference: `NFC-${Date.now().toString().slice(-6)}`,
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    };
-    handleCompletePayment([mobilePayment]);
+    recordPaymentTender(
+      'mobile',
+      effectiveDue,
+      undefined,
+      undefined,
+      `NFC-${Date.now().toString().slice(-6)}`
+    );
   };
 
   // Bank Transfer
   const handleCompleteBank = () => {
-    const bankPayment: PaymentRecord = {
-      id: `pay_${Date.now()}`,
-      method: 'bank',
-      amount: grandTotal,
-      transactionReference: `BANK-${Date.now().toString().slice(-6)}`,
-      status: 'completed',
-      createdAt: new Date().toISOString()
-    };
-    handleCompletePayment([bankPayment]);
+    recordPaymentTender(
+      'bank',
+      effectiveDue,
+      undefined,
+      undefined,
+      `BANK-${Date.now().toString().slice(-6)}`
+    );
   };
 
   // Loyalty Points Redemption
@@ -462,10 +523,26 @@ export const CheckoutScreen: React.FC = () => {
               <span className="font-mono tabular-nums font-semibold">{formatCurrency(taxAmount)}</span>
             </div>
 
+            {tipAmount > 0 && (
+              <div className="flex justify-between text-blue-700 font-semibold">
+                <span>{t('checkout.tip', 'Tip')} ({tipPercent}%)</span>
+                <span className="font-mono tabular-nums">+{formatCurrency(tipAmount)}</span>
+              </div>
+            )}
+
+            {isCashRoundingEnabled && selectedMethod === 'cash' && roundedCashTotal !== remainingBalance && (
+              <div className="flex justify-between text-amber-700 font-semibold text-[11px]">
+                <span>{t('checkout.cashRounding', 'Cash Rounding')}</span>
+                <span className="font-mono tabular-nums">
+                  {roundedCashTotal > remainingBalance ? '+' : ''}{formatCurrency(roundedCashTotal - remainingBalance)}
+                </span>
+              </div>
+            )}
+
             <div className="pt-3 border-t border-slate-200 flex justify-between items-baseline">
               <span className="text-base font-bold text-slate-900">{t('pos.total', 'Total Due')}</span>
               <span className="text-3xl font-black font-mono text-slate-900 tabular-nums">
-                {formatCurrency(grandTotal)}
+                {formatCurrency(effectiveDue)}
               </span>
             </div>
 
@@ -482,6 +559,75 @@ export const CheckoutScreen: React.FC = () => {
 
         {/* Right Column: Payment Methods & Cash Keypad (7 cols) */}
         <div className="lg:col-span-7 theme-card rounded-2xl border border-[var(--theme-card-border)] p-6 shadow-xs flex flex-col">
+          {/* Tips Bar & Split Payment Toggle (Loyverse Manual 10.7 & 2.9) */}
+          <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-200 gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-slate-600 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                {t('checkout.addTip', 'Tip')}:
+              </span>
+              {[0, 10, 15, 20].map(pct => (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => setTipPercent(pct)}
+                  className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${
+                    tipPercent === pct
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {pct === 0 ? 'None' : `${pct}%`}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsSplitPaymentMode(!isSplitPaymentMode);
+                if (isSplitPaymentMode) setSplitPayments([]);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
+                isSplitPaymentMode
+                  ? 'bg-amber-100 text-amber-800 border-amber-300'
+                  : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+              }`}
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5" />
+              <span>{isSplitPaymentMode ? t('checkout.splitActive', 'Split Mode: ON') : t('checkout.splitPayment', 'Split Payment')}</span>
+            </button>
+          </div>
+
+          {/* Split Payments Overview if enabled */}
+          {isSplitPaymentMode && (
+            <div className="mb-4 p-3 bg-amber-50/60 rounded-xl border border-amber-200 text-xs space-y-2">
+              <div className="flex items-center justify-between font-bold text-slate-800">
+                <span>Split Payments Recorded ({splitPayments.length})</span>
+                <span className="text-amber-700">Remaining Due: {formatCurrency(remainingBalance)}</span>
+              </div>
+              {splitPayments.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  {splitPayments.map((p, idx) => (
+                    <div key={p.id} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-amber-100">
+                      <span className="font-semibold uppercase text-slate-700">{p.method} Tender #{idx + 1}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-slate-900">{formatCurrency(p.amount)}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSplitPayments(splitPayments.filter(item => item.id !== p.id))}
+                          className="text-rose-500 hover:text-rose-700"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Payment Method Selector Tabs */}
           <div className="grid grid-cols-5 gap-2 mb-6">
             {[

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePOS } from '../../context/POSContext.tsx';
-import { Clock, Play, Trash2, X, Search, ShoppingBag, User } from 'lucide-react';
+import { Clock, Play, Trash2, X, Search, ShoppingBag, User, GitMerge, CheckSquare, Square } from 'lucide-react';
 
 export const HeldOrdersModal: React.FC = () => {
   const {
@@ -9,6 +9,7 @@ export const HeldOrdersModal: React.FC = () => {
     heldOrders,
     resumeOrder,
     deleteHeldOrder,
+    mergeHeldOrders,
     formatCurrency,
     formatTime,
     translateProductName,
@@ -16,8 +17,22 @@ export const HeldOrdersModal: React.FC = () => {
   } = usePOS();
 
   const [search, setSearch] = useState<string>('');
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
 
   if (!openHeldOrdersModal) return null;
+
+  const toggleSelectOrder = (id: string) => {
+    setSelectedOrderIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleMerge = () => {
+    if (selectedOrderIds.length >= 2) {
+      mergeHeldOrders(selectedOrderIds);
+      setSelectedOrderIds([]);
+    }
+  };
 
   const filteredOrders = heldOrders.filter(o => {
     if (!search.trim()) return true;
@@ -66,6 +81,31 @@ export const HeldOrdersModal: React.FC = () => {
           </div>
         )}
 
+        {/* Merge Banner when 2 or more tickets are selected */}
+        {selectedOrderIds.length >= 2 && (
+          <div className="p-3 bg-amber-50 border-b border-amber-200 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-amber-800 text-xs font-semibold">
+              <GitMerge className="w-4 h-4 text-amber-600" />
+              <span>{selectedOrderIds.length} {t('pos.ticketsSelected', 'tickets selected for merge')}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSelectedOrderIds([])}
+                className="text-xs text-slate-500 hover:text-slate-700 px-2 py-1 rounded"
+              >
+                {t('common.cancel', 'Clear')}
+              </button>
+              <button
+                onClick={handleMerge}
+                className="flex items-center gap-1.5 px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors"
+              >
+                <GitMerge className="w-3.5 h-3.5" />
+                <span>{t('pos.mergeTickets', 'Merge Tickets')}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {filteredOrders.length === 0 ? (
@@ -81,12 +121,27 @@ export const HeldOrdersModal: React.FC = () => {
           ) : (
             filteredOrders.map(order => {
               const formattedTime = formatTime(order.createdAt);
+              const isSelected = selectedOrderIds.includes(order.id);
 
               return (
                 <div
                   key={order.id}
-                  className="p-4 rounded-xl border border-slate-200 hover:border-blue-400 bg-white shadow-2xs transition-all flex items-center justify-between gap-3"
+                  className={`p-4 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                    isSelected ? 'border-amber-400 bg-amber-50/30' : 'border-slate-200 hover:border-blue-400 bg-white shadow-2xs'
+                  }`}
                 >
+                  <button
+                    onClick={() => toggleSelectOrder(order.id)}
+                    className="p-1 text-slate-400 hover:text-amber-600 transition-colors"
+                    title={isSelected ? 'Deselect ticket' : 'Select to merge'}
+                  >
+                    {isSelected ? (
+                      <CheckSquare className="w-5 h-5 text-amber-600" />
+                    ) : (
+                      <Square className="w-5 h-5 text-slate-300" />
+                    )}
+                  </button>
+
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">

@@ -94,6 +94,13 @@ export class PosService {
   }
 
   /**
+   * Merges two or more held orders into a single consolidated ticket
+   */
+  static mergeHeldOrders(heldOrderIds: string[]): HeldOrder | null {
+    return SalesService.mergeHeldOrders(heldOrderIds);
+  }
+
+  /**
    * Adjusts stock quantity manually
    */
   static adjustStock(

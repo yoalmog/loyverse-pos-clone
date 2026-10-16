@@ -418,6 +418,57 @@ export class SalesService {
   }
 
   /**
+   * Merge two or more held orders into a single consolidated ticket (Manual Section 2.11, p. 54-56)
+   */
+  static mergeHeldOrders(heldOrderIds: string[]): HeldOrder | null {
+    if (heldOrderIds.length < 2) return null;
+    const heldOrders = StorageService.getHeldOrders();
+    const selected = heldOrders.filter(h => heldOrderIds.includes(h.id));
+    if (selected.length < 2) return null;
+
+    const combinedItems: CartItem[] = [];
+    selected.forEach(order => {
+      order.items.forEach(item => {
+        const existing = combinedItems.find(
+          ci => ci.productId === item.productId && ci.variantId === item.variantId
+        );
+        if (existing) {
+          existing.quantity += item.quantity;
+        } else {
+          combinedItems.push({ ...item });
+        }
+      });
+    });
+
+    const subtotal = combinedItems.reduce((acc, it) => acc + (it.unitPrice * it.quantity), 0);
+    const taxAmount = Currency.multiply(subtotal, 0.18);
+    const total = subtotal + taxAmount;
+    const primaryCustomer = selected.find(s => s.customer)?.customer;
+    const mergedOrderNumber = `MERGED-${100 + heldOrders.length + 1}`;
+
+    const remaining = heldOrders.filter(h => !heldOrderIds.includes(h.id));
+    const merged: HeldOrder = {
+      id: `held_${Date.now()}`,
+      orderNumber: mergedOrderNumber,
+      storeId: selected[0].storeId,
+      employeeId: selected[0].employeeId,
+      employeeName: selected[0].employeeName,
+      customer: primaryCustomer,
+      items: combinedItems,
+      subtotal,
+      discountAmount: 0,
+      taxAmount,
+      total,
+      notes: selected.map(s => s.notes).filter(Boolean).join(' | '),
+      createdAt: new Date().toISOString()
+    };
+
+    remaining.unshift(merged);
+    StorageService.saveHeldOrders(remaining);
+    return merged;
+  }
+
+  /**
    * Synchronize queued offline transactions
    */
   static syncOfflineQueue(): number {
