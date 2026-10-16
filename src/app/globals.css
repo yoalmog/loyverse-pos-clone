@@ -53,3 +53,94 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(100, 116, 139, 0.7);
 }
+
+/* -------------------------------------------------------------
+   AuraPOS Production Theme & Appearance Engine
+   ------------------------------------------------------------- */
+:root, [data-theme="emerald"] {
+  --theme-primary: #059669;
+  --theme-primary-variant: #047857;
+  --theme-secondary: #10b981;
+  --theme-accent: #34d399;
+  --theme-bg: #f0fdf4;
+  --theme-bg-secondary: #dcfce7;
+  --theme-surface: #ffffff;
+  --theme-surface-variant: #f0fdf4;
+  --theme-card: #ffffff;
+  --theme-card-border: #bbf7d0;
+  --theme-text-primary: #064e3b;
+  --theme-text-secondary: #047857;
+  --theme-text-disabled: #94a3b8;
+  --theme-border: #cbd5e1;
+  --theme-divider: #e2e8f0;
+  --theme-icon: #059669;
+  --theme-button: #059669;
+  --theme-button-text: #ffffff;
+  --theme-button-hover: #047857;
+  --theme-selected: #dcfce7;
+  --theme-hover: #f1f5f9;
+  --theme-focus: #059669;
+  --theme-status-success: #10b981;
+  --theme-status-warning: #f59e0b;
+  --theme-status-error: #ef4444;
+  --theme-status-info: #3b82f6;
+}
+
+[data-theme="blue"] {
+  --theme-primary: #2563eb;
+  --theme-primary-variant: #1d4ed8;
+  --theme-secondary: #3b82f6;
+  --theme-accent: #60a5fa;
+  --theme-bg: #f4f7fc;
+  --theme-bg-secondary: #eaf0fa;
+  --theme-surface: #ffffff;
+  --theme-surface-variant: #f0f5ff;
+  --theme-card: #ffffff;
+  --theme-card-border: #dbeafe;
+  --theme-text-primary: #0f172a;
+  --theme-text-secondary: #475569;
+}
+
+[data-theme="dark"], [data-mode="dark"] {
+  --theme-primary: #10b981;
+  --theme-primary-variant: #059669;
+  --theme-bg: #0f172a;
+  --theme-bg-secondary: #020617;
+  --theme-surface: #1e293b;
+  --theme-surface-variant: #0f172a;
+  --theme-card: #1e293b;
+  --theme-card-border: #334155;
+  --theme-text-primary: #f8fafc;
+  --theme-text-secondary: #94a3b8;
+  --theme-border: #334155;
+  --theme-divider: #334155;
+}
+
+.theme-app-bg {
+  background-color: var(--theme-bg, #f4f7fc);
+  color: var(--theme-text-primary, #0f172a);
+}
+
+.theme-surface {
+  background-color: var(--theme-surface, #ffffff);
+  border-color: var(--theme-border, #cbd5e1);
+}
+
+.theme-card {
+  background-color: var(--theme-card, #ffffff);
+  border-color: var(--theme-card-border, #e2e8f0);
+  color: var(--theme-text-primary, #0f172a);
+}
+
+.theme-text {
+  color: var(--theme-text-primary, #0f172a);
+}
+
+.theme-text-secondary {
+  color: var(--theme-text-secondary, #475569);
+}
+
+.theme-border {
+  border-color: var(--theme-border, #cbd5e1);
+}
+
