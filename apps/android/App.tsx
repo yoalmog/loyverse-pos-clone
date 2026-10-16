@@ -66,6 +66,9 @@ export default function App() {
   // Shift & Register
   const [activeShift, setActiveShift] = useState<{ id: string; opening_cash: number; expected_cash: number } | null>(null);
   const [openingCashInput, setOpeningCashInput] = useState('200');
+  const [closingCashInput, setClosingCashInput] = useState('');
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [isClosingShift, setIsClosingShift] = useState(false);
 
   // Catalog State
   const [categories, setCategories] = useState<Category[]>([
@@ -73,9 +76,18 @@ export default function App() {
   ]);
   const [products, setProducts] = useState<Product[]>([]);
   const [cashiers, setCashiers] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [barcodeInput, setBarcodeInput] = useState('');
+
+  // Open Tickets (Park Cart & Recall)
+  const [openTickets, setOpenTickets] = useState<any[]>([]);
+  const [showOpenTicketsModal, setShowOpenTicketsModal] = useState(false);
+  const [showSaveTicketModal, setShowSaveTicketModal] = useState(false);
+  const [ticketNameInput, setTicketNameInput] = useState('');
 
   // Cart State
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -117,10 +129,19 @@ export default function App() {
         if (data.cashiers) {
           setCashiers(data.cashiers);
         }
+        if (data.customers) {
+          setCustomers(data.customers);
+        }
         if (data.currentShift) {
           setActiveShift(data.currentShift);
         }
       }
+
+      // Check open tickets
+      try {
+        const tickets = await posApi.getOpenTickets();
+        setOpenTickets(tickets);
+      } catch {}
 
       // Check offline queue
       const queue = await posApi.getOfflineQueue();
@@ -132,6 +153,7 @@ export default function App() {
       setIsLoadingCatalog(false);
     }
   }, []);
+
 
   useEffect(() => {
     loadInitialData();
@@ -262,6 +284,7 @@ export default function App() {
       idempotencyKey,
       userId: currentEmployee?.id || 'usr_cashier',
       shiftId: activeShift?.id || null,
+      customerId: selectedCustomer?.id || null,
       paymentMethod,
       cashTendered: tenderedCents,
       items: cart.map(item => ({
@@ -272,7 +295,7 @@ export default function App() {
         unitPrice: item.price,
         selectedModifiers: item.selectedModifiers,
       })),
-      orderNote: `Pedido desde POS Android (${selectedDiningOption})`,
+      orderNote: `Pedido desde POS Android (${selectedDiningOption})${selectedCustomer ? ` • Cliente: ${selectedCustomer.name}` : ''}`,
     };
 
     setIsSubmittingCheckout(true);
@@ -299,6 +322,7 @@ export default function App() {
       }
 
       setCart([]);
+      setSelectedCustomer(null);
       setShowCheckoutModal(false);
       setShowReceiptModal(true);
     } catch (err: any) {
@@ -307,6 +331,94 @@ export default function App() {
       setIsSubmittingCheckout(false);
     }
   };
+
+  // 7a. Save Open Ticket (Park Cart)
+  const handleSaveTicket = async () => {
+    if (cart.length === 0) return;
+    const name = ticketNameInput.trim() || `Ticket ${Date.now().toString().slice(-4)}`;
+    try {
+      await posApi.saveOpenTicket({
+        ticketName: name,
+        userId: currentEmployee?.id || 'usr_cashier',
+        shiftId: activeShift?.id || null,
+        customerId: selectedCustomer?.id || null,
+        items: cart.map(item => ({
+          productId: item.productId,
+          productName: item.name,
+          quantity: item.quantity,
+          unitPrice: item.price,
+          selectedModifiers: item.selectedModifiers,
+        })),
+        orderNote: `Guardado desde POS Android (${selectedDiningOption})`,
+      });
+      setCart([]);
+      setSelectedCustomer(null);
+      setShowSaveTicketModal(false);
+      Alert.alert('Ticket Guardado', `"${name}" se guardó como ticket abierto.`);
+      const fresh = await posApi.getOpenTickets();
+      setOpenTickets(fresh);
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'No se pudo guardar el ticket');
+    }
+  };
+
+  // 7b. Recall Open Ticket
+  const handleRecallTicket = (ticket: any) => {
+    const applyTicket = async () => {
+      const restoredItems: CartItem[] = (ticket.items || []).map((it: any) => ({
+        id: `ci_${Date.now()}_${it.product_id || it.productId}`,
+        productId: it.product_id || it.productId,
+        name: it.product_name || it.name,
+        price: it.unit_price || it.price,
+        quantity: it.quantity || 1,
+        selectedModifiers: it.selected_modifiers || it.selectedModifiers || [],
+      }));
+      setCart(restoredItems);
+      if (ticket.customer_id) {
+        const cust = customers.find(c => c.id === ticket.customer_id);
+        if (cust) setSelectedCustomer(cust);
+      }
+      setShowOpenTicketsModal(false);
+      try {
+        await posApi.deleteOpenTicket(ticket.id);
+        const fresh = await posApi.getOpenTickets();
+        setOpenTickets(fresh);
+      } catch {}
+      Alert.alert('Ticket Recuperado', `Se cargó "${ticket.ticket_name || ticket.id}" en el terminal.`);
+    };
+
+    if (cart.length > 0) {
+      Alert.alert(
+        'Reemplazar Ticket Actual',
+        'Hay productos en el ticket actual. ¿Desea reemplazarlos con este ticket abierto?',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Reemplazar', onPress: applyTicket }
+        ]
+      );
+    } else {
+      applyTicket();
+    }
+  };
+
+  // 7c. Shift Close
+  const handleCloseShift = async () => {
+    if (!activeShift) return;
+    const closingCents = Math.round(parseFloat(closingCashInput || '0') * 100);
+    setIsClosingShift(true);
+    try {
+      await posApi.closeShift(activeShift.id, closingCents);
+      setActiveShift(null);
+      setShowShiftModal(false);
+      Alert.alert('Turno Cerrado', `El turno fue cerrado exitosamente con ${formatMoney(closingCents)} en caja.`);
+      setCurrentScreen('PIN');
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'No se pudo cerrar el turno');
+    } finally {
+      setIsClosingShift(false);
+    }
+  };
+
 
   // 8. Manual Sync Queue Trigger
   const handleSyncNow = async () => {
@@ -468,6 +580,31 @@ export default function App() {
                   </TouchableOpacity>
                 )}
 
+                <TouchableOpacity
+                  style={[styles.navBtn, openTickets.length > 0 && { backgroundColor: '#1e3a5f' }]}
+                  onPress={async () => {
+                    try {
+                      const fresh = await posApi.getOpenTickets();
+                      setOpenTickets(fresh);
+                    } catch {}
+                    setShowOpenTicketsModal(true);
+                  }}
+                >
+                  <Text style={[styles.navBtnText, openTickets.length > 0 && { color: '#60a5fa' }]}>
+                    📋 Tickets {openTickets.length > 0 ? `(${openTickets.length})` : ''}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.navBtn}
+                  onPress={() => {
+                    setClosingCashInput(activeShift ? (activeShift.expected_cash / 100).toFixed(2) : '0.00');
+                    setShowShiftModal(true);
+                  }}
+                >
+                  <Text style={styles.navBtnText}>💰 Turno</Text>
+                </TouchableOpacity>
+
                 <TouchableOpacity style={styles.navBtn} onPress={() => setCurrentScreen('HISTORY')}>
                   <Text style={styles.navBtnText}>Historial</Text>
                 </TouchableOpacity>
@@ -551,12 +688,40 @@ export default function App() {
           <View style={styles.rightCart}>
             <View style={styles.cartHeader}>
               <Text style={styles.cartTitle}>Ticket Actual ({cart.reduce((a, b) => a + b.quantity, 0)})</Text>
-              {cart.length > 0 && (
-                <TouchableOpacity onPress={() => setCart([])}>
-                  <Text style={styles.clearText}>Vaciar</Text>
+              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                {cart.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.parkBtn}
+                    onPress={() => {
+                      setTicketNameInput(`Mesa ${openTickets.length + 1}`);
+                      setShowSaveTicketModal(true);
+                    }}
+                  >
+                    <Text style={styles.parkBtnText}>⏸ Guardar</Text>
+                  </TouchableOpacity>
+                )}
+                {cart.length > 0 && (
+                  <TouchableOpacity onPress={() => setCart([])}>
+                    <Text style={styles.clearText}>Vaciar</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Customer Attachment Bar */}
+            <TouchableOpacity
+              style={styles.customerBar}
+              onPress={() => setShowCustomerModal(true)}
+            >
+              <Text style={styles.customerBarText}>
+                {selectedCustomer ? `👤 ${selectedCustomer.name} (${selectedCustomer.loyalty_points || 0} pts)` : '+ Agregar Cliente'}
+              </Text>
+              {selectedCustomer && (
+                <TouchableOpacity onPress={() => setSelectedCustomer(null)}>
+                  <Text style={styles.removeCustomerText}>✕</Text>
                 </TouchableOpacity>
               )}
-            </View>
+            </TouchableOpacity>
 
             {/* Dining Options */}
             <View style={styles.diningRow}>
@@ -898,9 +1063,195 @@ export default function App() {
           </View>
         </View>
       </Modal>
+
+      {/* SAVE TICKET MODAL */}
+      <Modal visible={showSaveTicketModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Guardar Ticket Abierto</Text>
+            <Text style={styles.label}>Nombre o Identificador del Ticket:</Text>
+            <TextInput
+              style={[styles.inputLarge, { fontSize: 18, height: 48 }]}
+              value={ticketNameInput}
+              onChangeText={setTicketNameInput}
+              placeholder="Ej. Mesa 4, Barra 2, Para Llevar"
+              placeholderTextColor="#64748b"
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.btnCancel}
+                onPress={() => setShowSaveTicketModal(false)}
+              >
+                <Text style={styles.btnCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.btnConfirm}
+                onPress={handleSaveTicket}
+              >
+                <Text style={styles.btnConfirmText}>Guardar Ticket</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* OPEN TICKETS MODAL */}
+      <Modal visible={showOpenTicketsModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { width: 500, maxHeight: '80%' }]}>
+            <Text style={styles.modalTitle}>Tickets Abiertos ({openTickets.length})</Text>
+            <FlatList
+              data={openTickets}
+              keyExtractor={item => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.ticketCard}
+                  onPress={() => handleRecallTicket(item)}
+                >
+                  <View>
+                    <Text style={styles.ticketCardTitle}>{item.ticket_name || item.name || 'Ticket sin nombre'}</Text>
+                    <Text style={styles.ticketCardSub}>
+                      {item.items?.length || 0} productos • {new Date(item.created_at || Date.now()).toLocaleTimeString()}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: '#10b981', fontWeight: 'bold', fontSize: 14 }}>
+                      {formatMoney(item.total || (item.items || []).reduce((acc: number, it: any) => acc + (it.unit_price * it.quantity), 0))}
+                    </Text>
+                    <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold', marginTop: 4 }}>
+                      Cargar ➔
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={{ textAlign: 'center', color: '#64748b', paddingVertical: 20 }}>
+                  No hay tickets abiertos actualmente.
+                </Text>
+              }
+            />
+            <TouchableOpacity
+              style={[styles.btnSecondary, { marginTop: 14 }]}
+              onPress={() => setShowOpenTicketsModal(false)}
+            >
+              <Text style={styles.btnSecondaryText}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* CUSTOMER SELECTION MODAL */}
+      <Modal visible={showCustomerModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { width: 480, maxHeight: '80%' }]}>
+            <Text style={styles.modalTitle}>Seleccionar Cliente</Text>
+            <FlatList
+              data={customers}
+              keyExtractor={item => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.customerRow,
+                    selectedCustomer?.id === item.id && { borderColor: '#10b981', borderWidth: 1 }
+                  ]}
+                  onPress={() => {
+                    setSelectedCustomer(item);
+                    setShowCustomerModal(false);
+                  }}
+                >
+                  <View>
+                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 13 }}>{item.name}</Text>
+                    <Text style={{ color: '#94a3b8', fontSize: 11 }}>{item.phone || item.email || 'Sin contacto'}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: '#38bdf8', fontWeight: 'bold', fontSize: 12 }}>
+                      {item.loyalty_points || 0} pts
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={{ textAlign: 'center', color: '#64748b', paddingVertical: 20 }}>
+                  No hay clientes registrados en el catálogo.
+                </Text>
+              }
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <TouchableOpacity
+                style={[styles.btnSecondary, { flex: 1 }]}
+                onPress={() => {
+                  setSelectedCustomer(null);
+                  setShowCustomerModal(false);
+                }}
+              >
+                <Text style={styles.btnSecondaryText}>Sin Cliente</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btnSecondary, { flex: 1 }]}
+                onPress={() => setShowCustomerModal(false)}
+              >
+                <Text style={styles.btnSecondaryText}>Cerrar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* SHIFT DETAILS & CLOSE MODAL */}
+      <Modal visible={showShiftModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Gestión de Turno de Caja</Text>
+            <View style={{ backgroundColor: '#1e293b', borderRadius: 10, padding: 12, marginBottom: 14 }}>
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Cajero:</Text>
+                <Text style={styles.totalValue}>{currentEmployee?.name}</Text>
+              </View>
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Fondo Inicial:</Text>
+                <Text style={styles.totalValue}>{formatMoney(activeShift?.opening_cash || 0)}</Text>
+              </View>
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Efectivo Esperado en Caja:</Text>
+                <Text style={[styles.totalValue, { color: '#10b981' }]}>{formatMoney(activeShift?.expected_cash || 0)}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.label}>Efectivo Real Contado en Gaveta (S/):</Text>
+            <TextInput
+              style={[styles.inputLarge, { fontSize: 20, height: 50 }]}
+              keyboardType="numeric"
+              value={closingCashInput}
+              onChangeText={setClosingCashInput}
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.btnCancel}
+                onPress={() => setShowShiftModal(false)}
+                disabled={isClosingShift}
+              >
+                <Text style={styles.btnCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btnConfirm, { backgroundColor: '#e11d48' }]}
+                onPress={handleCloseShift}
+                disabled={isClosingShift}
+              >
+                {isClosingShift ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.btnConfirmText}>Cerrar Turno</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#020617' },
@@ -1040,4 +1391,15 @@ const styles = StyleSheet.create({
   btnText: { color: '#fff', fontWeight: 'bold' },
   btnSecondary: { backgroundColor: '#1e293b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginTop: 10, alignItems: 'center' },
   btnSecondaryText: { color: '#cbd5e1', fontSize: 12, fontWeight: 'bold' },
+
+  parkBtn: { backgroundColor: '#1e3a5f', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  parkBtnText: { color: '#93c5fd', fontSize: 11, fontWeight: 'bold' },
+  customerBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1e293b', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginVertical: 6 },
+  customerBarText: { color: '#38bdf8', fontSize: 11, fontWeight: '600' },
+  removeCustomerText: { color: '#ef4444', fontSize: 12, fontWeight: 'bold', paddingHorizontal: 4 },
+  ticketCard: { backgroundColor: '#1e293b', borderRadius: 10, padding: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  ticketCardTitle: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  ticketCardSub: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
+  customerRow: { backgroundColor: '#1e293b', borderRadius: 8, padding: 10, marginBottom: 6, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
 });
+

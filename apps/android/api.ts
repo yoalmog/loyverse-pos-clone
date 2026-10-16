@@ -3,7 +3,7 @@
  * Connects to the shared backend (/api/pos/* and /api/sync)
  */
 
-import { storage } from './storage';
+import { storage } from './storage.ts';
 
 export const STORAGE_KEYS = {
   API_URL: 'loyverse_api_url',
@@ -15,9 +15,9 @@ export const STORAGE_KEYS = {
   SESSION_TOKEN: 'loyverse_session_token',
 };
 
-// Default API URL: supports build-time EXPO_PUBLIC_POS_URL, with local fallback for emulator
-export const DEFAULT_API_URL = process.env.EXPO_PUBLIC_POS_URL || process.env.POS_URL || 'http://10.0.2.2:3001';
-export const WEB_API_URL = process.env.EXPO_PUBLIC_POS_URL || process.env.POS_URL || 'http://localhost:3001';
+// Default API URL: points to the deployed production HTTPS backend on Render
+export const DEFAULT_API_URL = process.env.EXPO_PUBLIC_POS_URL || process.env.POS_URL || 'https://loyverse-pos-clone-i5ly.onrender.com';
+export const WEB_API_URL = process.env.EXPO_PUBLIC_POS_URL || process.env.POS_URL || 'https://loyverse-pos-clone-i5ly.onrender.com';
 
 const DEFAULT_TIMEOUT_MS = 6000;
 
@@ -398,4 +398,44 @@ export const posApi = {
     if (!json.success) throw new Error(json.error || 'Failed to refund order');
     return json.data;
   },
+
+  /**
+   * Get open tickets
+   */
+  async getOpenTickets(): Promise<any[]> {
+    const baseUrl = await getBaseApiUrl();
+    try {
+      const res = await fetchWithTimeout(`${baseUrl}/api/pos/tickets`, { method: 'GET' }, 5000);
+      const json = await res.json();
+      return json.success && json.data ? json.data : [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * Save / park open ticket
+   */
+  async saveOpenTicket(ticketData: any): Promise<any> {
+    const baseUrl = await getBaseApiUrl();
+    const res = await fetchWithTimeout(`${baseUrl}/api/pos/tickets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ticketData),
+    }, 5000);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to save open ticket');
+    return json.data;
+  },
+
+  /**
+   * Delete / recall open ticket
+   */
+  async deleteOpenTicket(id: string): Promise<void> {
+    const baseUrl = await getBaseApiUrl();
+    await fetchWithTimeout(`${baseUrl}/api/pos/tickets?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }, 5000);
+  },
 };
+
