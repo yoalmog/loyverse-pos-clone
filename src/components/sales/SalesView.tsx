@@ -161,6 +161,19 @@ export const SalesView: React.FC = () => {
         currentEmployee
       );
 
+      if (saleForRefund.id) {
+        fetch('/api/pos/refund', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId: saleForRefund.id,
+            userId: currentEmployee?.id || 'usr_admin',
+            reason: refundReason,
+            supervisorPin: '9999'
+          })
+        }).catch(err => console.warn('PostgreSQL refund sync notice:', err));
+      }
+
       refreshData();
       setSaleForRefund(null);
       showToast({

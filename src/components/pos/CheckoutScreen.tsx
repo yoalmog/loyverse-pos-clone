@@ -189,6 +189,32 @@ export const CheckoutScreen: React.FC = () => {
       refreshData();
       setActiveCompletedSale(result.sale);
 
+      // Seamlessly commit to authoritative PostgreSQL database
+      fetch('/api/pos/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentEmployee?.id || 'usr_cashier',
+          customerId: activeCustomer?.id || null,
+          items: cartItems.map(i => ({
+            productId: i.productId,
+            variationId: i.variantId || null,
+            productName: i.productName,
+            quantity: i.quantity,
+            unitPrice: Math.round(i.unitPrice * 100),
+            discountAmount: Math.round((i.discountAmount || 0) * 100),
+            selectedModifiers: []
+          })),
+          overallDiscountAmount: Math.round(discountAmount * 100),
+          paymentMethod: payments[0]?.method === 'cash' ? 'CASH' : payments[0]?.method === 'card' ? 'CARD' : 'WALLET',
+          cashTendered: payments[0]?.tendered ? Math.round(payments[0].tendered * 100) : undefined,
+          referenceNumber: result.sale.receiptNumber,
+          orderNote: cartNotes || ''
+        })
+      }).catch(err => {
+        console.warn('[Checkout] PostgreSQL async commit notice (offline/queued):', err);
+      });
+
       if (result.offline) {
         showToast({
           type: 'warning',

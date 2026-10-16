@@ -211,6 +211,25 @@ export const ProductsView: React.FC = () => {
         showToast({ type: 'success', title: 'Product Created', message: formName });
       }
 
+      // Sync with authoritative PostgreSQL backend
+      fetch('/api/backoffice/products', {
+        method: editingProduct ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingProduct?.id,
+          name: formName.trim(),
+          category_id: formCategoryId,
+          price: Math.round(price * 100),
+          cost: Math.round(cost * 100),
+          sku: formSku.trim(),
+          barcode: formBarcode.trim(),
+          image_url: formImageUrl.trim() || null,
+          stock_quantity: stock,
+          low_stock_threshold: threshold,
+          track_stock: formTrackInventory ? 1 : 0
+        })
+      }).catch(err => console.warn('PostgreSQL product sync notice:', err));
+
       setIsModalOpen(false);
     }, 'Save Product');
   };
@@ -241,6 +260,9 @@ export const ProductsView: React.FC = () => {
         const all = StorageService.getProducts().filter(p => p.id !== productId);
         StorageService.saveProducts(all);
         refreshData();
+        fetch(`/api/backoffice/products?id=${productId}`, { method: 'DELETE' }).catch(err =>
+          console.warn('PostgreSQL product delete sync notice:', err)
+        );
         showToast({ type: 'info', title: 'Product Deleted' });
       }
     }, 'Delete Product');

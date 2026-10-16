@@ -152,6 +152,19 @@ export const InventoryView: React.FC = () => {
     requireOwnerAuth(() => {
       const fullReason = adjNotes.trim() ? `${adjReason} - ${adjNotes.trim()}` : adjReason;
       PosService.adjustStock(adjustingProduct.id, adjType, qty, fullReason, currentEmployee);
+      // Sync with authoritative PostgreSQL backend
+      const changeAmount = adjType === 'remove' ? -qty : adjType === 'set' ? qty - adjustingProduct.stock : qty;
+      fetch('/api/backoffice/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: adjustingProduct.id,
+          changeAmount,
+          reason: fullReason,
+          userId: currentEmployee?.id || 'usr_admin'
+        })
+      }).catch(err => console.warn('PostgreSQL inventory sync notice:', err));
+
       refreshData();
       setAdjustingProduct(null);
       showToast({

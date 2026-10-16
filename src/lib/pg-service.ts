@@ -1140,4 +1140,39 @@ export const backofficePgService = {
 
     return { success: true };
   },
+
+  async getCategories() {
+    return queryPg('SELECT * FROM categories ORDER BY sort_order ASC, name ASC');
+  },
+
+  async createCategory(body: any) {
+    const id = body.id || `cat_${Date.now()}`;
+    const name = (body.name || '').trim();
+    const color = body.color || '#3b82f6';
+    const sort_order = Number(body.sort_order ?? body.sortOrder ?? 0);
+    await queryPg(
+      'INSERT INTO categories (id, name, color, sort_order) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET name = $2, color = $3, sort_order = $4',
+      [id, name, color, sort_order]
+    );
+    return { id, name, color, sort_order };
+  },
+
+  async updateCategory(body: any) {
+    const id = body.id;
+    const name = (body.name || '').trim();
+    const color = body.color || '#3b82f6';
+    const sort_order = Number(body.sort_order ?? body.sortOrder ?? 0);
+    await queryPg(
+      'UPDATE categories SET name = $1, color = $2, sort_order = $3 WHERE id = $4',
+      [name, color, sort_order, id]
+    );
+    return { id, name, color, sort_order };
+  },
+
+  async deleteCategory(id: string) {
+    await queryPg('UPDATE products SET category_id = NULL WHERE category_id = $1', [id]);
+    await queryPg('DELETE FROM categories WHERE id = $1', [id]);
+    return { success: true };
+  },
 };
+

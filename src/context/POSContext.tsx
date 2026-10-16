@@ -591,6 +591,53 @@ export const POSProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTaxConfigs(StorageService.getTaxConfigs());
     setPendingSyncCount(StorageService.getOfflineQueue().length);
     setIsOffline(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+
+    // Asynchronously refresh from PostgreSQL
+    fetch('/api/pos/catalog')
+      .then(res => res.json())
+      .then(json => {
+        if (json.success && json.data) {
+          const { categories: pgCategories, products: pgProducts } = json.data;
+          if (pgCategories && pgCategories.length > 0) {
+            const mappedCats: Category[] = pgCategories.map((c: any) => ({
+              id: c.id,
+              storeId: 'store_aura_main',
+              name: c.name,
+              iconName: c.icon_name || 'Utensils',
+              color: c.color || '#059669',
+              sortOrder: c.sort_order || 0,
+              active: true
+            }));
+            setCategories(mappedCats);
+            StorageService.saveCategories(mappedCats);
+          }
+          if (pgProducts && pgProducts.length > 0) {
+            const mappedProds: Product[] = pgProducts.map((p: any) => ({
+              id: p.id,
+              storeId: 'store_aura_main',
+              categoryId: p.category_id,
+              name: p.name,
+              sku: p.sku || '',
+              barcode: p.barcode || '',
+              price: (p.price || 0) / 100,
+              cost: (p.cost || 0) / 100,
+              unit: 'item',
+              trackInventory: p.track_stock === 1,
+              stock: p.stock_quantity ?? 100,
+              lowStockThreshold: p.low_stock_threshold ?? 5,
+              active: true,
+              isFavorite: Boolean(p.is_favorite),
+              color: p.color || '#059669',
+              imageUrl: p.image_url || undefined,
+              createdAt: p.created_at || new Date().toISOString(),
+              updatedAt: p.updated_at || new Date().toISOString()
+            }));
+            setProducts(mappedProds);
+            StorageService.saveProducts(mappedProds);
+          }
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const updateSettings = useCallback((newSettings: StoreSettings) => {

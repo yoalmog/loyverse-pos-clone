@@ -188,10 +188,15 @@ export class CategoryService {
 
     // Sync with backend API
     try {
-      await fetch('/api/v1/categories', {
+      await fetch('/api/backoffice/categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: newCategory, translations: input.translations })
+        body: JSON.stringify({
+          id: newCategory.id,
+          name: newCategory.name,
+          color: newCategory.color,
+          sort_order: newCategory.sortOrder
+        })
       });
     } catch {
       // Offline: will sync when online
@@ -266,10 +271,15 @@ export class CategoryService {
 
     // Sync with backend API
     try {
-      await fetch(`/api/v1/categories/${id}`, {
+      await fetch('/api/backoffice/categories', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: updated, translations: input.translations })
+        body: JSON.stringify({
+          id: updated.id,
+          name: updated.name,
+          color: updated.color,
+          sort_order: updated.sortOrder
+        })
       });
     } catch {}
 
@@ -348,7 +358,7 @@ export class CategoryService {
 
     // Call API
     try {
-      await fetch(`/api/v1/categories/${id}?destinationCategoryId=${destinationCategoryId || ''}`, {
+      await fetch(`/api/backoffice/categories?id=${encodeURIComponent(id)}`, {
         method: 'DELETE'
       });
     } catch {}
