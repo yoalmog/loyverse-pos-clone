@@ -11,7 +11,8 @@ import {
   Alert,
   FlatList,
   StatusBar,
-  ActivityIndicator
+  ActivityIndicator,
+  Image
 } from 'react-native';
 import { posApi, getBaseApiUrl, setBaseApiUrl, DEFAULT_API_URL } from './api';
 import { storage } from './storage';
@@ -26,6 +27,7 @@ interface Product {
   stock_quantity: number;
   barcode?: string;
   sku?: string;
+  image_url?: string | null;
   variations?: any[];
   modifiers?: any[];
 }
@@ -531,7 +533,11 @@ export default function App() {
                     style={[styles.productCard, { borderColor: item.color || '#334155' }]}
                     onPress={() => addToCart(item)}
                   >
-                    <View style={[styles.colorBar, { backgroundColor: item.color || '#10b981' }]} />
+                    {item.image_url ? (
+                      <Image source={{ uri: item.image_url }} style={styles.productImage} />
+                    ) : (
+                      <View style={[styles.colorBar, { backgroundColor: item.color || '#10b981' }]} />
+                    )}
                     <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
                     <Text style={styles.productPrice}>{formatMoney(item.price)}</Text>
                     <Text style={styles.stockText}>Stock: {item.stock_quantity}</Text>
@@ -948,7 +954,8 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { color: '#94a3b8', marginTop: 12, fontSize: 13 },
   gridContent: { paddingBottom: 20 },
-  productCard: { flex: 1, minWidth: '30%', backgroundColor: '#0f172a', borderWidth: 1, borderRadius: 12, padding: 10, margin: 4, minHeight: 95 },
+  productCard: { flex: 1, minWidth: '30%', backgroundColor: '#0f172a', borderWidth: 1, borderRadius: 12, padding: 8, margin: 4, minHeight: 110 },
+  productImage: { width: '100%', height: 70, borderRadius: 8, marginBottom: 6, backgroundColor: '#1e293b' },
   colorBar: { height: 4, width: 24, borderRadius: 2, marginBottom: 6 },
   productName: { color: '#fff', fontSize: 12, fontWeight: 'bold', minHeight: 32 },
   productPrice: { color: '#10b981', fontSize: 13, fontWeight: 'bold', marginTop: 4 },
