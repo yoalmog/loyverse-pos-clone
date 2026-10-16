@@ -97,6 +97,8 @@ export default function App() {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'WALLET'>('CASH');
   const [cashTenderedInput, setCashTenderedInput] = useState('');
+  const [tipPercent, setTipPercent] = useState<number>(0);
+  const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
   const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
 
   // Receipt Modal State
@@ -266,16 +268,23 @@ export default function App() {
     return { subtotalCents: sub, taxCents: tax, grandTotalCents: sub };
   }, [cart]);
 
+  const tipCents = useMemo(() => {
+    if (tipPercent <= 0) return 0;
+    return Math.round(grandTotalCents * (tipPercent / 100));
+  }, [grandTotalCents, tipPercent]);
+
+  const payableCents = grandTotalCents + tipCents;
+
   // 7. Atomic Checkout Execution (Direct API or Persistent Offline Queue)
   const handleConfirmCheckout = async () => {
     if (cart.length === 0) return;
 
     const tenderedCents = paymentMethod === 'CASH'
       ? Math.round(parseFloat(cashTenderedInput || '0') * 100)
-      : grandTotalCents;
+      : payableCents;
 
-    if (paymentMethod === 'CASH' && tenderedCents < grandTotalCents) {
-      Alert.alert('Monto Insuficiente', `Monto recibido (${formatMoney(tenderedCents)}) es menor al total (${formatMoney(grandTotalCents)})`);
+    if (paymentMethod === 'CASH' && tenderedCents < payableCents) {
+      Alert.alert('Monto Insuficiente', `Monto recibido (${formatMoney(tenderedCents)}) es menor al total (${formatMoney(payableCents)})`);
       return;
     }
 
@@ -398,6 +407,52 @@ export default function App() {
       );
     } else {
       applyTicket();
+    }
+  };
+
+  // 7c. Merge Open Tickets (Loyverse Manual 2.11, p. 54-56)
+  const handleMergeTickets = async () => {
+    if (selectedTicketIds.length < 2) return;
+    const ticketsToMerge = openTickets.filter(t => selectedTicketIds.includes(t.id));
+    if (ticketsToMerge.length < 2) return;
+
+    const combinedItems: any[] = [];
+    ticketsToMerge.forEach(t => {
+      (t.items || []).forEach((it: any) => {
+        const pId = it.productId || it.product_id;
+        const existing = combinedItems.find(ci => (ci.productId || ci.product_id) === pId);
+        if (existing) {
+          existing.quantity += it.quantity;
+        } else {
+          combinedItems.push({
+            productId: pId,
+            productName: it.product_name || it.name,
+            quantity: it.quantity || 1,
+            unitPrice: it.unit_price || it.price,
+            selectedModifiers: it.selected_modifiers || it.selectedModifiers || []
+          });
+        }
+      });
+    });
+
+    const mergedName = `Unificado (${ticketsToMerge.map(t => t.ticket_name || t.id).join(', ')})`;
+    try {
+      await posApi.saveOpenTicket({
+        ticketName: mergedName,
+        items: combinedItems,
+        userId: currentEmployee?.id || 'usr_cashier'
+      });
+
+      for (const t of ticketsToMerge) {
+        await posApi.deleteOpenTicket(t.id).catch(() => {});
+      }
+
+      const fresh = await posApi.getOpenTickets();
+      setOpenTickets(fresh);
+      setSelectedTicketIds([]);
+      Alert.alert('Tickets Unificados', `Se consolidaron ${ticketsToMerge.length} tickets en uno solo.`);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'No se pudieron unir los tickets');
     }
   };
 
@@ -944,7 +999,31 @@ export default function App() {
       <Modal visible={showCheckoutModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Forma de Pago — Total: {formatMoney(grandTotalCents)}</Text>
+            <Text style={styles.modalTitle}>
+              Forma de Pago — Total: {formatMoney(payableCents)}
+              {tipPercent > 0 ? ` (Propina: ${formatMoney(tipCents)})` : ''}
+            </Text>
+
+            {/* Tip Selection (Loyverse Manual 10.7) */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: 'bold' }}>Propina:</Text>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {[0, 10, 15, 20].map(pct => (
+                  <TouchableOpacity
+                    key={pct}
+                    style={[
+                      styles.denomChip,
+                      tipPercent === pct && { backgroundColor: '#38bdf8', borderColor: '#38bdf8' }
+                    ]}
+                    onPress={() => setTipPercent(pct)}
+                  >
+                    <Text style={[styles.denomChipText, tipPercent === pct && { color: '#0f172a', fontWeight: 'bold' }]}>
+                      {pct === 0 ? 'Sin Propina' : `${pct}%`}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
 
             {/* Payment Method Selector */}
             <View style={styles.payMethodsRow}>
@@ -1100,30 +1179,63 @@ export default function App() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalBox, { width: 500, maxHeight: '80%' }]}>
             <Text style={styles.modalTitle}>Tickets Abiertos ({openTickets.length})</Text>
+
+            {/* Merge Selected Tickets Action (Loyverse Manual 2.11) */}
+            {selectedTicketIds.length >= 2 && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#f59e0b', padding: 10, borderRadius: 10, marginBottom: 12, alignItems: 'center' }}
+                onPress={handleMergeTickets}
+              >
+                <Text style={{ color: '#0f172a', fontWeight: 'bold', fontSize: 13 }}>
+                  ⚡ Unir {selectedTicketIds.length} Tickets Seleccionados
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <FlatList
               data={openTickets}
               keyExtractor={item => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.ticketCard}
-                  onPress={() => handleRecallTicket(item)}
-                >
-                  <View>
-                    <Text style={styles.ticketCardTitle}>{item.ticket_name || item.name || 'Ticket sin nombre'}</Text>
-                    <Text style={styles.ticketCardSub}>
-                      {item.items?.length || 0} productos • {new Date(item.created_at || Date.now()).toLocaleTimeString()}
-                    </Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ color: '#10b981', fontWeight: 'bold', fontSize: 14 }}>
-                      {formatMoney(item.total || (item.items || []).reduce((acc: number, it: any) => acc + (it.unit_price * it.quantity), 0))}
-                    </Text>
-                    <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: 'bold', marginTop: 4 }}>
-                      Cargar ➔
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
+              renderItem={({ item }) => {
+                const isSelected = selectedTicketIds.includes(item.id);
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.ticketCard,
+                      isSelected && { borderColor: '#f59e0b', borderWidth: 1.5, backgroundColor: '#1e293b' }
+                    ]}
+                    onPress={() => {
+                      setSelectedTicketIds(prev =>
+                        prev.includes(item.id) ? prev.filter(x => x !== item.id) : [...prev, item.id]
+                      );
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                      <Text style={{ color: isSelected ? '#f59e0b' : '#64748b', fontSize: 18 }}>
+                        {isSelected ? '☑' : '☐'}
+                      </Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.ticketCardTitle}>{item.ticket_name || item.name || 'Ticket sin nombre'}</Text>
+                        <Text style={styles.ticketCardSub}>
+                          {item.items?.length || 0} productos • {new Date(item.created_at || Date.now()).toLocaleTimeString()}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ color: '#10b981', fontWeight: 'bold', fontSize: 14 }}>
+                        {formatMoney(item.total || (item.items || []).reduce((acc: number, it: any) => acc + (it.unit_price * it.quantity), 0))}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => handleRecallTicket(item)}
+                        style={{ marginTop: 4, paddingHorizontal: 10, paddingVertical: 3, backgroundColor: '#0284c7', borderRadius: 6 }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>
+                          Cargar ➔
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
               ListEmptyComponent={
                 <Text style={{ textAlign: 'center', color: '#64748b', paddingVertical: 20 }}>
                   No hay tickets abiertos actualmente.

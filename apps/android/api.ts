@@ -3,7 +3,7 @@
  * Connects to the shared backend (/api/pos/* and /api/sync)
  */
 
-import { storage } from './storage.ts';
+import { storage } from './storage';
 
 export const STORAGE_KEYS = {
   API_URL: 'loyverse_api_url',
